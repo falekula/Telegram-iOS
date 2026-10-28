@@ -1,0 +1,64 @@
+name: Build IPA for sideloading
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Select required Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("versions.json"))["xcode"])')
+          developer_dir="/Applications/Xcode_${version}.app/Contents/Developer"
+          test -d "$developer_dir"
+          sudo xcode-select --switch "$developer_dir"
+          xcodebuild -version
+          df -h .
+
+      - name: Import build-only signing certificate
+        run: python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+
+      - name: Build device IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/artifacts
+          python3 -u build-system/Make/Make.py \
+            build \
+            --configurationPath=build-system/appstore-configuration.json \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --configuration=release_arm64 \
+            --buildNumber="$((100000 + GITHUB_RUN_NUMBER))" \
+            2>&1 | tee build/build.log
+          test -s bazel-bin/Telegram/Telegram.ipa
+          cp bazel-bin/Telegram/Telegram.ipa build/artifacts/Telegram.ipa
+          unzip -tq build/artifacts/Telegram.ipa
+
+      - name: Upload IPA (requires re-signing before installation)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telegram-IPA-sideload
+          path: build/artifacts/Telegram.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build/build.log
+          if-no-files-found: ignore
+          retention-days: 7
