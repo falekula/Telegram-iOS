@@ -157,12 +157,14 @@ private func synchronizeMarkAllUnseen(transaction: Transaction, postbox: Postbox
                     }
                 }
             } else {
-                return network.request(Api.functions.messages.readMessageContents(id: filteredIds.map { $0.id }))
+                return network.requestReadAcknowledgement(Api.functions.messages.readMessageContents(id: filteredIds.map { $0.id }))
                 |> map { result -> Int32? in
-                    switch result {
+                    if let result = result {
+                        switch result {
                         case let .affectedMessages(affectedMessagesData):
                             let (pts, ptsCount) = (affectedMessagesData.pts, affectedMessagesData.ptsCount)
                             stateManager.addUpdateGroups([.updatePts(pts: pts, ptsCount: ptsCount)])
+                        }
                     }
                     if ids.count < limit {
                         return nil
@@ -306,8 +308,7 @@ private func synchronizeMarkAllUnseenReactions(transaction: Transaction, postbox
         }
     }
     
-    let signal = network.request(Api.functions.messages.readReactions(flags: flags, peer: inputPeer, topMsgId: topMsgId, savedPeerId: savedPeerId))
-    |> map(Optional.init)
+    let signal = network.requestReadAcknowledgement(Api.functions.messages.readReactions(flags: flags, peer: inputPeer, topMsgId: topMsgId, savedPeerId: savedPeerId))
     |> `catch` { _ -> Signal<Api.messages.AffectedHistory?, Bool> in
         return .fail(true)
     }
@@ -403,8 +404,7 @@ private func synchronizeMarkAllUnseenPollVotes(transaction: Transaction, postbox
     }
     let _ = savedPeerId
     
-    let signal = network.request(Api.functions.messages.readPollVotes(flags: flags, peer: inputPeer, topMsgId: topMsgId))
-    |> map(Optional.init)
+    let signal = network.requestReadAcknowledgement(Api.functions.messages.readPollVotes(flags: flags, peer: inputPeer, topMsgId: topMsgId))
     |> `catch` { _ -> Signal<Api.messages.AffectedHistory?, Bool> in
         return .fail(true)
     }

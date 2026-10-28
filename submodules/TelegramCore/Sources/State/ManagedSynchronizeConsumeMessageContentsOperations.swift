@@ -111,8 +111,7 @@ func managedSynchronizeConsumeMessageContentOperations(postbox: Postbox, network
 
 private func synchronizeConsumeMessageContents(transaction: Transaction, network: Network, stateManager: AccountStateManager, peerId: PeerId, operation: SynchronizeConsumeMessageContentsOperation) -> Signal<Void, NoError> {
     if peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup {
-        return network.request(Api.functions.messages.readMessageContents(id: operation.messageIds.map { $0.id }))
-        |> map(Optional.init)
+        return network.requestReadAcknowledgement(Api.functions.messages.readMessageContents(id: operation.messageIds.map { $0.id }))
         |> `catch` { _ -> Signal<Api.messages.AffectedMessages?, NoError> in
             return .single(nil)
         }

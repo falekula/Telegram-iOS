@@ -6,6 +6,10 @@ import MtProtoKit
 
 
 func addSecretChatOutgoingOperation(transaction: Transaction, peerId: PeerId, operation: SecretChatOutgoingOperationContents, state: SecretChatState) -> SecretChatState {
+    if SideloadPrivacy.hideReadReceipts, case .readMessagesContent = operation {
+        // Do not enqueue encrypted read receipts or consume a secret-chat sequence number.
+        return state
+    }
     var updatedState = state
     switch updatedState.embeddedState {
         case let .sequenceBasedLayer(sequenceState):

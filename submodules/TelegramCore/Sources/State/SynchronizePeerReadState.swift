@@ -320,8 +320,7 @@ private func pushPeerReadState(network: Network, postbox: Postbox, stateManager:
             default:
                 switch readState {
                 case let .idBased(maxIncomingReadId, _, _, _, markedUnread):
-                    var pushSignal: Signal<Void, NoError> = network.request(Api.functions.messages.readHistory(peer: inputPeer, maxId: maxIncomingReadId))
-                    |> map(Optional.init)
+                    var pushSignal: Signal<Void, NoError> = network.requestReadAcknowledgement(Api.functions.messages.readHistory(peer: inputPeer, maxId: maxIncomingReadId))
                     |> `catch` { _ -> Signal<Api.messages.AffectedMessages?, NoError> in
                         return .single(nil)
                     }
@@ -425,6 +424,11 @@ private func pushPeerReadState(network: Network, postbox: Postbox, stateManager:
 }
 
 func synchronizePeerReadState(network: Network, postbox: Postbox, stateManager: AccountStateManager, peerId: PeerId, push: Bool, validate: Bool) -> Signal<Never, PeerReadStateValidationError> {
+    if SideloadPrivacy.hideReadReceipts {
+        // Keep local read marks. Comparing them with deliberately stale server marks
+        // would otherwise retry forever; clear the queued operation locally instead.
+        return confirmSynchronized(postbox: postbox, peerId: peerId) |> ignoreValues
+    }
     // A channel the account is not a member of has no read state on the server
     // (NonMemberChannelReadState.swift): nothing is pushed or validated, and the queued operation
     // is confirmed so the manager does not pick it up again. This also covers paths that queue one

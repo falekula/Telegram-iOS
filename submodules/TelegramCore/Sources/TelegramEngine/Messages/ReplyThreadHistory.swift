@@ -492,7 +492,7 @@ private class ReplyThreadHistoryContextImpl {
                     return .single(.boolFalse)
                 }
                 |> ignoreValues
-                if revalidate {
+                if revalidate && !SideloadPrivacy.hideReadReceipts {
                     let validateSignal = strongSelf.account.network.request(Api.functions.messages.getDiscussionMessage(peer: inputPeer, msgId: Int32(clamping: threadId)))
                     |> map { result -> (MessageId?, Int) in
                         switch result {

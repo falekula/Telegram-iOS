@@ -11,6 +11,7 @@ private enum FetchError {
 
 @available(iOS 10.0, *)
 private func fetchRawData(prefix: String) -> Signal<Data, FetchError> {
+    #if TELEGRAM_ENABLE_ICLOUD
     return Signal { subscriber in
         let container = CKContainer.default()
         let publicDatabase = container.database(with: .public)
@@ -45,6 +46,11 @@ private func fetchRawData(prefix: String) -> Signal<Data, FetchError> {
         return ActionDisposable {
         }
     }
+    #else
+    // Re-signed apps without CloudKit entitlements must never create a CKContainer.
+    // The generic error becomes a single nil result, letting normal DC discovery run.
+    return .fail(.generic)
+    #endif
 }
 
 @available(iOS 10.0, *)

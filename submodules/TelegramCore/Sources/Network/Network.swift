@@ -1372,6 +1372,12 @@ public final class Network: NSObject {
     }
     
     func requestWithAdditionalInfo<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>), info: NetworkRequestAdditionalInfo, tag: NetworkRequestDependencyTag? = nil, automaticFloodWait: Bool = true, onFloodWaitError: ((String) -> Void)? = nil) -> Signal<NetworkRequestResult<T>, MTRpcError> {
+        if SideloadPrivacy.suppressesRequest(data.0.name) {
+            if let result = Api.Bool.boolTrue as? T {
+                return .single(.result(result))
+            }
+            return .complete()
+        }
         let requestService = self.requestService
         return Signal { [requestService] subscriber in
             let request = NetworkEngineRequest(
@@ -1418,6 +1424,14 @@ public final class Network: NSObject {
     }
     
     func request<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>), tag: NetworkRequestDependencyTag? = nil, automaticFloodWait: Bool = true, onFloodWaitError: ((String) -> Void)? = nil) -> Signal<T, MTRpcError> {
+        if SideloadPrivacy.suppressesRequest(data.0.name) {
+            // Bool acknowledgements complete local bookkeeping. Never fabricate pts
+            // for AffectedMessages / AffectedHistory: those callers use the helper below.
+            if let result = Api.Bool.boolTrue as? T {
+                return .single(result)
+            }
+            return .complete()
+        }
         let requestService = self.requestService
         return Signal { [requestService] subscriber in
             let request = NetworkEngineRequest(
@@ -1455,6 +1469,14 @@ public final class Network: NSObject {
         }
     }
     
+    func requestReadAcknowledgement<T>(_ data: (FunctionDescription, Buffer, DeserializeFunctionResponse<T>)) -> Signal<T?, MTRpcError> {
+        if SideloadPrivacy.suppressesRequest(data.0.name) {
+            // nil means locally consumed, with no remote update to apply.
+            return .single(nil)
+        }
+        return self.request(data) |> map(Optional.init)
+    }
+
     func updateNetworkSpeedLimitedEventNotifyInterval(value: Double) {
         let _ = self.networkSpeedLimitedEventState.with { state in
             state.notifyInterval = value

@@ -30,6 +30,12 @@ jobs:
       - name: Import build-only signing certificate
         run: python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
 
+      - name: Test privacy policy
+        run: |
+          xcrun swiftc submodules/TelegramCore/Sources/Network/SideloadPrivacy.swift \
+            build-system/tests/SideloadPrivacyTests.swift -o /tmp/sideload-privacy-tests
+          /tmp/sideload-privacy-tests
+
       - name: Build device IPA
         shell: bash
         run: |
@@ -37,7 +43,7 @@ jobs:
           mkdir -p build/artifacts
           python3 -u build-system/Make/Make.py \
             build \
-            --configurationPath=build-system/appstore-configuration.json \
+            --configurationPath=build-system/sideload-configuration.json \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \
             --buildNumber="$((100000 + GITHUB_RUN_NUMBER))" \
@@ -45,6 +51,17 @@ jobs:
           test -s bazel-bin/Telegram/Telegram.ipa
           cp bazel-bin/Telegram/Telegram.ipa build/artifacts/Telegram.ipa
           unzip -tq build/artifacts/Telegram.ipa
+
+      - name: Collect debug symbols
+        if: success()
+        run: |
+          mkdir -p build/dsyms
+          for path in bazel-bin/Telegram/*.dSYM; do
+            if [ -d "$path" ]; then cp -R "$path" build/dsyms/; fi
+          done
+          if [ -n "$(ls -A build/dsyms)" ]; then
+            ditto -c -k --keepParent build/dsyms build/artifacts/Telegram-dSYMs.zip
+          fi
 
       - name: Upload IPA (requires re-signing before installation)
         uses: actions/upload-artifact@v4
@@ -60,5 +77,13 @@ jobs:
         with:
           name: build-log
           path: build/build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telegram-debug-symbols
+          path: build/artifacts/Telegram-dSYMs.zip
           if-no-files-found: ignore
           retention-days: 7
