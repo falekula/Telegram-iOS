@@ -566,7 +566,9 @@ public func dataPrivacyController(context: AccountContext, focusOnItemTag: DataP
             }
         }
         
-        let rightNavigationButton: ItemListNavigationButton? = nil
+        let rightNavigationButton: ItemListNavigationButton? = ItemListNavigationButton(content: .text("История"), style: .regular, enabled: true, action: {
+            pushControllerImpl?(localMessageHistoryController(context: context))
+        })
         
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(presentationData.strings.PrivateDataSettings_Title), leftNavigationButton: nil, rightNavigationButton: rightNavigationButton, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
         

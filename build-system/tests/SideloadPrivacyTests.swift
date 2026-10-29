@@ -8,7 +8,7 @@ struct SideloadPrivacyTests {
             "messages.readHistory", "channels.readHistory",
             "messages.readEncryptedHistory", "messages.readDiscussion",
             "messages.readSavedHistory", "messages.readMessageContents",
-            "channels.readMessageContents", "messages.readReactions", "messages.readPollVotes"
+            "channels.readMessageContents", "messages.readReactions", "messages.readPollVotes", "stories.readStories", "stories.incrementStoryViews"
         ] {
             precondition(SideloadPrivacy.suppressesRequest(method), "Leaked activity RPC: \(method)")
         }

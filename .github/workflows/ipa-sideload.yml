@@ -35,6 +35,17 @@ jobs:
           xcrun swiftc submodules/TelegramCore/Sources/Network/SideloadPrivacy.swift \
             build-system/tests/SideloadPrivacyTests.swift -o /tmp/sideload-privacy-tests
           /tmp/sideload-privacy-tests
+          xcrun swiftc submodules/TelegramCore/Sources/TelegramEngine/Messages/LocalMessageHistoryEntry.swift \
+            build-system/tests/LocalMessageHistoryTests.swift -o /tmp/local-history-tests
+          /tmp/local-history-tests
+          python3 -m unittest discover -s build-system/tests -p 'test_*.py'
+
+
+      - name: Prepare private API configuration
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: python3 build-system/prepare-sideload-configuration.py
 
       - name: Build device IPA
         shell: bash
@@ -43,7 +54,7 @@ jobs:
           mkdir -p build/artifacts
           python3 -u build-system/Make/Make.py \
             build \
-            --configurationPath=build-system/sideload-configuration.json \
+            --configurationPath=build/private-sideload-configuration.json \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \
             --buildNumber="$((100000 + GITHUB_RUN_NUMBER))" \
@@ -63,11 +74,40 @@ jobs:
             ditto -c -k --keepParent build/dsyms build/artifacts/Telegram-dSYMs.zip
           fi
 
+      - name: Encrypt private build artifacts
+        env:
+          TELEGRAM_ARTIFACT_PASSWORD: ${{ secrets.TELEGRAM_ARTIFACT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$TELEGRAM_ARTIFACT_PASSWORD"
+          xcrun swiftc build-system/encrypt-sideload-artifact.swift -o /tmp/encrypt-sideload-artifact
+          for path in build/artifacts/Telegram.ipa build/artifacts/Telegram-dSYMs.zip; do
+            if [ -f "$path" ]; then
+              /tmp/encrypt-sideload-artifact "$path"
+              rm "$path"
+            fi
+          done
+
+      - name: Sanitize build log and remove private configuration
+        if: always()
+        env:
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          python3 - <<'PYCODE'
+          import os
+          from pathlib import Path
+          path = Path('build/build.log')
+          secret = os.environ.get('TELEGRAM_API_HASH', '')
+          if path.exists() and secret:
+              path.write_text(path.read_text(errors='replace').replace(secret, '[REDACTED]'))
+          Path('build/private-sideload-configuration.json').unlink(missing_ok=True)
+          PYCODE
+
       - name: Upload IPA (requires re-signing before installation)
         uses: actions/upload-artifact@v4
         with:
           name: Telegram-IPA-sideload
-          path: build/artifacts/Telegram.ipa
+          path: build/artifacts/Telegram.ipa.enc
           if-no-files-found: error
           retention-days: 7
 
@@ -84,6 +124,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Telegram-debug-symbols
-          path: build/artifacts/Telegram-dSYMs.zip
+          path: build/artifacts/Telegram-dSYMs.zip.enc
           if-no-files-found: ignore
           retention-days: 7

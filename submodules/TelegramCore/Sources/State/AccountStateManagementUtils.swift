@@ -4622,6 +4622,11 @@ func replayFinalState(
             case let .DeleteEphemeralMessages(peerId, ids):
                 deleteEphemeralMessages(transaction: transaction, peerId: peerId, ids: ids)
             case let .DeleteMessagesWithGlobalIds(ids):
+                for id in transaction.messageIdsForGlobalIds(ids) {
+                    if let message = transaction.getMessage(id) {
+                        recordLocalMessageHistory(transaction: transaction, message: message, deleted: true)
+                    }
+                }
                 var resourceIds: [MediaResourceId] = []
                 transaction.deleteMessagesWithGlobalIds(ids, forEachMedia: { media in
                     addMessageMediaResourceIdsToRemove(media: media, resourceIds: &resourceIds)
@@ -4631,6 +4636,11 @@ func replayFinalState(
                 }
                 deletedMessageIds.append(contentsOf: ids.map { .global($0) })
             case let .DeleteMessages(ids):
+                for id in ids {
+                    if let message = transaction.getMessage(id) {
+                        recordLocalMessageHistory(transaction: transaction, message: message, deleted: true)
+                    }
+                }
                 _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: ids, manualAddMessageThreadStatsDifference: { id, add, remove in
                     addMessageThreadStatsDifference(threadKey: id, remove: remove, addedMessagePeer: nil, addedMessageId: nil, isOutgoing: false)
                 })
@@ -4668,6 +4678,9 @@ func replayFinalState(
                     invalidateGroupStats.insert(Namespaces.PeerGroup.archive)
                 }
             case let .EditMessage(id, message):
+                if let previous = transaction.getMessage(id) {
+                    recordLocalMessageHistory(transaction: transaction, message: previous, deleted: false, updatedText: message.text)
+                }
                 var generatedEvent: (reactionAuthor: Peer, reaction: MessageReaction.Reaction, message: Message, timestamp: Int32)?
                 transaction.updateMessage(id, update: { previousMessage in
                     let peers: [PeerId:Peer] = previousMessage.peers.reduce([:], { current, value in

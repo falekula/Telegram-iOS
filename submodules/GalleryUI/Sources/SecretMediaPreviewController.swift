@@ -13,6 +13,8 @@ import AppBundle
 import LocalizedPeerData
 import TooltipUI
 import TelegramNotices
+import SaveToCameraRoll
+import UndoUI
 
 private func galleryMediaForMedia(media: Media) -> Media? {
     if let media = media as? TelegramMediaImage {
@@ -139,8 +141,8 @@ private final class SecretMediaPreviewControllerNode: GalleryControllerNode {
     private func layoutTimeoutNode(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, transition: ContainedViewLayoutTransition) {
         if let timeoutNode = self.timeoutNode {
             let diameter: CGFloat = 28.0
-            // In the bar's trailing place, clear of a status island beside the bar (iPhone Duo).
-            transition.updateFrame(node: timeoutNode, frame: CGRect(origin: CGPoint(x: layout.size.width - layout.safeInsets.right - layout.navigationBarTrailingButtonsInset - diameter - 9.0, y: navigationBarHeight - 9.0 - diameter), size: CGSize(width: diameter, height: diameter)))
+            // Keep the timeout centered, clear of Back and the photo Save button.
+            transition.updateFrame(node: timeoutNode, frame: CGRect(origin: CGPoint(x: layout.safeInsets.left + floor((layout.size.width - layout.safeInsets.left - layout.safeInsets.right - diameter) / 2.0), y: navigationBarHeight - 9.0 - diameter), size: CGSize(width: diameter, height: diameter)))
         }
     }
 }
@@ -196,6 +198,11 @@ public final class SecretMediaPreviewController: ViewController {
         self.disposable.set((context.account.postbox.messageView(messageId) |> deliverOnMainQueue).start(next: { [weak self] view in
             if let strongSelf = self {
                 strongSelf.messageView = view
+                if let message = view.message, message.paidContent == nil, mediaForMessage(message: message) is TelegramMediaImage {
+                    strongSelf.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Сохранить", style: .plain, target: strongSelf, action: #selector(strongSelf.savePhotoPressed))
+                } else {
+                    strongSelf.navigationItem.rightBarButtonItem = nil
+                }
                 if strongSelf.isViewLoaded {
                     strongSelf.applyMessageView()
                 }
@@ -238,6 +245,19 @@ public final class SecretMediaPreviewController: ViewController {
         self.centralItemAttributesDisposable.dispose()
     }
     
+    @objc private func savePhotoPressed() {
+        guard let message = self.messageView?.message,
+              message.paidContent == nil,
+              let image = mediaForMessage(message: message) as? TelegramMediaImage else {
+            return
+        }
+        let _ = (saveLoadedPhotoToCameraRoll(context: self.context, mediaReference: .message(message: MessageReference(message), media: image))
+        |> deliverOnMainQueue).startStandalone(next: { [weak self] result in
+            guard let self else { return }
+            self.present(UndoOverlayController(presentationData: self.presentationData, content: .info(title: nil, text: result.message, timeout: 3.0, customUndoText: nil), elevatedLayout: false, animateInAsReplacement: false, action: { _ in false }), in: .window(.root))
+        })
+    }
+
     @objc func donePressed() {
         self.dismiss(forceAway: false)
     }

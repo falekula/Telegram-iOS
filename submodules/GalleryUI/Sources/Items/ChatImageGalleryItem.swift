@@ -738,6 +738,19 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
                     f(.default)
                 })))
                 
+                if (message.isCopyProtected() || self.peerIsCopyProtected || self.isSecret), message.paidContent == nil, let media = self.contextAndMedia?.1 {
+                    items.append(.action(ContextMenuActionItem(text: self.presentationData.strings.Gallery_SaveImage, icon: { theme in
+                        generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Download"), color: theme.actionSheet.primaryTextColor)
+                    }, action: { [weak self] _, finish in
+                        finish(.default)
+                        let _ = (saveLoadedPhotoToCameraRoll(context: context, mediaReference: media)
+                        |> deliverOnMainQueue).startStandalone(next: { [weak self] result in
+                            guard let self, let controller = self.galleryController() else { return }
+                            controller.present(UndoOverlayController(presentationData: self.presentationData, content: .info(title: nil, text: result.message, timeout: 3.0, customUndoText: nil), elevatedLayout: false, animateInAsReplacement: false, action: { _ in false }), in: .window(.root))
+                        })
+                    })))
+                }
+
                 if !message.isCopyProtected() && !self.peerIsCopyProtected && message.paidContent == nil, let media = self.contextAndMedia?.1 {
                     items.append(.action(ContextMenuActionItem(text: self.presentationData.strings.Gallery_CreateSticker, icon: { theme in generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Sticker"), color: theme.actionSheet.primaryTextColor) }, action: { [weak self] _, f in
                         f(.default)

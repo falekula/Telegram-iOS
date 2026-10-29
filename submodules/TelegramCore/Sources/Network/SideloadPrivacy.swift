@@ -10,7 +10,7 @@ enum SideloadPrivacy {
              "messages.readEncryptedHistory", "messages.readDiscussion",
              "messages.readSavedHistory", "messages.readMessageContents",
              "channels.readMessageContents", "messages.readReactions",
-             "messages.readPollVotes":
+             "messages.readPollVotes", "stories.readStories", "stories.incrementStoryViews":
             return true
         default:
             return false
