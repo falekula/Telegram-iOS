@@ -1378,10 +1378,13 @@ public final class Network: NSObject {
             }
             return .complete()
         }
+        // Defense in depth: every account.updateStatus route uses the offline payload.
+        let payload = SideloadPrivacy.forcesOfflineStatus(data.0.name)
+            ? Api.functions.account.updateStatus(offline: .boolTrue).1 : data.1
         let requestService = self.requestService
         return Signal { [requestService] subscriber in
             let request = NetworkEngineRequest(
-                payload: data.1.makeData(),
+                payload: payload.makeData(),
                 metadata: WrappedRequestMetadata(metadata: WrappedFunctionDescription(data.0), tag: tag),
                 shortMetadata: WrappedRequestShortMetadata(shortMetadata: WrappedShortFunctionDescription(data.0)),
                 parse: { response in
@@ -1432,10 +1435,13 @@ public final class Network: NSObject {
             }
             return .complete()
         }
+        // Defense in depth: every account.updateStatus route uses the offline payload.
+        let payload = SideloadPrivacy.forcesOfflineStatus(data.0.name)
+            ? Api.functions.account.updateStatus(offline: .boolTrue).1 : data.1
         let requestService = self.requestService
         return Signal { [requestService] subscriber in
             let request = NetworkEngineRequest(
-                payload: data.1.makeData(),
+                payload: payload.makeData(),
                 metadata: WrappedRequestMetadata(metadata: WrappedFunctionDescription(data.0), tag: tag),
                 shortMetadata: WrappedRequestShortMetadata(shortMetadata: WrappedShortFunctionDescription(data.0)),
                 parse: { response in

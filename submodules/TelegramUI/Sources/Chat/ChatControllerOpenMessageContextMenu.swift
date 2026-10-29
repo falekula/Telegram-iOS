@@ -18,6 +18,7 @@ import TopMessageReactions
 import TelegramNotices
 import PresentationDataUtils
 import ChatPresentationInterfaceState
+import SettingsUI
 
 extension ChatControllerImpl {
     func openMessageContextMenu(message: EngineMessage, selectAll: Bool, node: ASDisplayNode, frame: CGRect, anyRecognizer: UIGestureRecognizer?, location: CGPoint?) -> Void {
@@ -63,6 +64,15 @@ extension ChatControllerImpl {
                 var (allowedReactions, _) = allowedReactionsAndStars
                 
                 var actions = actions
+                if case let .list(items) = actions.content {
+                    var items = items
+                    items.insert(.action(ContextMenuActionItem(text: "История изменений", icon: { _ in nil }, action: { [weak self] _, finish in
+                        finish(.default)
+                        guard let self else { return }
+                        self.push(localMessageHistoryController(context: self.context, message: message))
+                    })), at: 0)
+                    actions.content = .list(items)
+                }
                 switch actions.content {
                 case let .list(itemList):
                     if itemList.isEmpty {

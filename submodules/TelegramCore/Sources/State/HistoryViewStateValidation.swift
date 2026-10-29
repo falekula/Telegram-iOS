@@ -892,13 +892,14 @@ private func validateBatch(postbox: Postbox, network: Network, transaction: Tran
                                         }
                                     }
                                     
+                                    recordLocalMessageHistory(transaction: transaction, message: previousMessage, deleted: false, updatedText: message.text)
                                     transaction.updateMessage(id, update: { currentMessage in
-                                        if updatedTimestamp != timestamp {
+                                        if updatedTimestamp != timestamp || currentMessage.text != message.text {
                                             var updatedLocalTags = message.localTags
                                             if currentMessage.localTags.contains(.OutgoingLiveLocation) {
                                                 updatedLocalTags.insert(.OutgoingLiveLocation)
                                             }
-                                            return .update(message.withUpdatedLocalTags(updatedLocalTags))
+                                            return .update(mergedServerMessageUpdate(previous: currentMessage, updated: message.withUpdatedLocalTags(updatedLocalTags)))
                                         } else {
                                             var storeForwardInfo: StoreMessageForwardInfo?
                                             if let forwardInfo = currentMessage.forwardInfo {
@@ -992,7 +993,12 @@ private func validateBatch(postbox: Postbox, network: Network, transaction: Tran
                                         return .update(StoreMessage(id: currentMessage.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: StoreMessageFlags(currentMessage.flags), tags: updatedTags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: attributes, media: currentMessage.media))
                                     })
                                 } else {
-                                    _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: [id])
+                                    if let localMessage = transaction.getMessage(id) {
+                                        recordLocalMessageHistory(transaction: transaction, message: localMessage, deleted: true)
+                                        if !retainMessageLocally(transaction: transaction, message: localMessage, deleted: true, ephemeral: shouldRetainEphemeralMedia(localMessage)) {
+                                            _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: [id])
+                                        }
+                                    }
                                     Logger.shared.log("HistoryValidation", "deleting message \(id) in \(id.peerId)")
                                 }
                             }
@@ -1136,13 +1142,14 @@ private func validateReplyThreadBatch(postbox: Postbox, network: Network, transa
                                     }
                                 }
                                 
+                                recordLocalMessageHistory(transaction: transaction, message: previousMessage, deleted: false, updatedText: message.text)
                                 transaction.updateMessage(id, update: { currentMessage in
-                                    if updatedTimestamp != timestamp {
+                                    if updatedTimestamp != timestamp || currentMessage.text != message.text {
                                         var updatedLocalTags = message.localTags
                                         if currentMessage.localTags.contains(.OutgoingLiveLocation) {
                                             updatedLocalTags.insert(.OutgoingLiveLocation)
                                         }
-                                        return .update(message.withUpdatedLocalTags(updatedLocalTags))
+                                        return .update(mergedServerMessageUpdate(previous: currentMessage, updated: message.withUpdatedLocalTags(updatedLocalTags)))
                                     } else {
                                         var storeForwardInfo: StoreMessageForwardInfo?
                                         if let forwardInfo = currentMessage.forwardInfo {
@@ -1175,7 +1182,12 @@ private func validateReplyThreadBatch(postbox: Postbox, network: Network, transa
                 
                     for id in removedMessageIds {
                         if !validMessageIds.contains(id) {
-                            _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: [id])
+                            if let localMessage = transaction.getMessage(id) {
+                                recordLocalMessageHistory(transaction: transaction, message: localMessage, deleted: true)
+                                if !retainMessageLocally(transaction: transaction, message: localMessage, deleted: true, ephemeral: shouldRetainEphemeralMedia(localMessage)) {
+                                    _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: [id])
+                                }
+                            }
                             Logger.shared.log("HistoryValidation", "deleting thread message \(id) in \(id.peerId)")
                         }
                     }

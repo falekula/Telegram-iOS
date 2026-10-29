@@ -251,5 +251,10 @@ public func stringForMessageTimestampStatus(
         }
     }
     
+    if let local = message.attributes.compactMap({ $0 as? LocalMessageStateAttribute }).first {
+        if local.deleted { dateText = "Удалено · " + dateText }
+        else if local.retainedMedia { dateText = "Сохранено · " + dateText }
+        else if !local.previousTexts.isEmpty { dateText = "История: \(local.previousTexts.count) · " + dateText }
+    }
     return dateText
 }

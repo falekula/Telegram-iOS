@@ -120,6 +120,13 @@ public let telegramPostboxSeedConfiguration: SeedConfiguration = {
             return GlobalNotificationSettings.defaultSettings.defaultIncludePeer(peer: peer)
         }),
         mergeMessageAttributes: { previous, updated in
+            if let local = previous.compactMap({ $0 as? LocalMessageStateAttribute }).first,
+               !updated.contains(where: { $0 is LocalMessageStateAttribute }) {
+                updated.append(local)
+            }
+            if updated.contains(where: { ($0 as? LocalMessageStateAttribute)?.retainedMedia == true }) {
+                updated.removeAll { $0 is AutoremoveTimeoutMessageAttribute || $0 is AutoclearTimeoutMessageAttribute }
+            }
             if previous.isEmpty {
                 return
             }

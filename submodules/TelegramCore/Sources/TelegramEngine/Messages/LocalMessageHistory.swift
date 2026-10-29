@@ -5,15 +5,13 @@ import SwiftSignalKit
 private let localMessageHistoryKey = ValueBoxKey("falekula.local-message-history.v1")
 
 func recordLocalMessageHistory(transaction: Transaction, message: Message, deleted: Bool, updatedText: String? = nil) {
-    // Disappearing messages and secret chats retain their original lifecycle.
-    guard message.id.namespace == Namespaces.Message.Cloud,
-          message.id.peerId.namespace != Namespaces.Peer.SecretChat,
-          !message.attributes.contains(where: { $0 is AutoremoveTimeoutMessageAttribute || $0 is AutoclearTimeoutMessageAttribute }) else {
+    guard message.id.namespace == Namespaces.Message.Cloud || message.id.namespace == Namespaces.Message.SecretIncoming else {
         return
     }
     if !deleted && message.text == updatedText {
         return
     }
+    trackLocalMessage(transaction: transaction, id: message.id)
     var state = transaction.getPreferencesEntry(key: localMessageHistoryKey)?.get(LocalMessageHistoryState.self) ?? LocalMessageHistoryState()
     state.append(LocalMessageHistoryEntry(
         id: UUID().uuidString,
@@ -43,6 +41,7 @@ extension TelegramEngine.Messages {
 
     public func clearLocalMessageHistory() -> Signal<Void, NoError> {
         return self.account.postbox.transaction { transaction in
+            clearRetainedMessages(transaction: transaction)
             transaction.setPreferencesEntry(key: localMessageHistoryKey, value: nil)
         }
     }

@@ -2,6 +2,11 @@
 // reveal activity on Telegram's servers; no client can promise invisibility then.
 enum SideloadPrivacy {
     static let hideReadReceipts = true
+    static let hideOnline = true
+
+    static func forcesOfflineStatus(_ name: String) -> Bool {
+        return hideOnline && name == "account.updateStatus"
+    }
 
     static func suppressesRequest(_ name: String) -> Bool {
         switch name {

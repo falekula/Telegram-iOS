@@ -14,6 +14,7 @@ private final class AccountPresenceManagerImpl {
     
     private var shouldKeepOnlinePresenceDisposable: Disposable?
     private let currentRequestDisposable = MetaDisposable()
+    private let privacySettingsDisposable = MetaDisposable()
     private var onlineTimer: SignalKitTimer?
     
     private var wasOnline: Bool = false
@@ -21,6 +22,11 @@ private final class AccountPresenceManagerImpl {
     init(queue: Queue, shouldKeepOnlinePresence: Signal<Bool, NoError>, network: Network) {
         self.queue = queue
         self.network = network
+        // Apply this for every authenticated account, not just the settings screen.
+        self.privacySettingsDisposable.set((network.request(Api.functions.account.setPrivacy(
+            key: .inputPrivacyKeyStatusTimestamp,
+            rules: [.inputPrivacyValueDisallowAll]
+        )) |> retryRequest).start())
         
         self.shouldKeepOnlinePresenceDisposable = (shouldKeepOnlinePresence
         |> distinctUntilChanged
@@ -39,6 +45,7 @@ private final class AccountPresenceManagerImpl {
         assert(self.queue.isCurrent())
         self.shouldKeepOnlinePresenceDisposable?.dispose()
         self.currentRequestDisposable.dispose()
+        self.privacySettingsDisposable.dispose()
         self.onlineTimer?.invalidate()
     }
     
@@ -53,7 +60,7 @@ private final class AccountPresenceManagerImpl {
             }, queue: self.queue)
             self.onlineTimer = timer
             timer.start()
-            request = self.network.request(Api.functions.account.updateStatus(offline: .boolFalse))
+            request = self.network.request(Api.functions.account.updateStatus(offline: .boolTrue))
         } else {
             self.onlineTimer?.invalidate()
             self.onlineTimer = nil

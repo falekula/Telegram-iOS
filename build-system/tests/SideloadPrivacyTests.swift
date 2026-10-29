@@ -20,6 +20,8 @@ struct SideloadPrivacyTests {
             precondition(!SideloadPrivacy.suppressesRequest(method), "Blocked normal operation: \(method)")
         }
         precondition(SideloadPrivacy.hideReadReceipts)
+        precondition(SideloadPrivacy.forcesOfflineStatus("account.updateStatus"))
+        precondition(!SideloadPrivacy.forcesOfflineStatus("messages.sendMessage"))
         print("Sideload privacy policy tests passed")
     }
 }

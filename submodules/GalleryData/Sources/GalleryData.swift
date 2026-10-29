@@ -320,6 +320,12 @@ public func chatMessageGalleryControllerData(
                 }, baseNavigationController: navigationController, actionInteraction: actionInteraction)
                 gallery.temporaryDoNotWaitForReady = autoplayingVideo
                 return .gallery(.single(gallery))
+            } else if personalForkKeepsMedia(EngineMessage(message)) {
+                let _ = context.engine.messages.retainDisappearingPhoto(id: message.id).startStandalone()
+                let gallery = GalleryController(context: context, source: .standaloneMessage(message, mediaSubject), invertItemOrder: false, streamSingleVideo: false, fromPlayingVideo: false, landscape: landscape, timecode: nil, synchronousLoad: synchronousLoad, replaceRootController: { [weak navigationController] controller, ready in
+                    navigationController?.replaceTopController(controller, animated: false, ready: ready)
+                }, baseNavigationController: navigationController, actionInteraction: actionInteraction)
+                return .gallery(.single(gallery))
             } else if message.containsSecretMedia {
                 let gallery = SecretMediaPreviewController(context: context, messageId: message.id)
                 return .secretGallery(gallery)

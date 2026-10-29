@@ -10,6 +10,15 @@ func mergedServerMessageUpdate(previous previousMessage: Message, updated messag
     var updatedFlags = message.flags
     var updatedLocalTags = message.localTags
     var updatedAttributes = message.attributes
+    let local = previousMessage.attributes.compactMap { $0 as? LocalMessageStateAttribute }.first
+    var versions = local?.previousTexts ?? []
+    if previousMessage.text != message.text, versions.last != previousMessage.text {
+        versions.append(previousMessage.text)
+    }
+    if local != nil || !versions.isEmpty {
+        updatedAttributes.removeAll { $0 is LocalMessageStateAttribute }
+        updatedAttributes.append(LocalMessageStateAttribute(deleted: local?.deleted ?? false, retainedMedia: local?.retainedMedia ?? false, previousTexts: versions))
+    }
     if previousMessage.localTags.contains(.OutgoingLiveLocation) {
         updatedLocalTags.insert(.OutgoingLiveLocation)
     }
@@ -37,6 +46,9 @@ func mergedServerMessageUpdate(previous previousMessage: Message, updated messag
     }
 
     var updatedMedia = message.media
+    if local?.retainedMedia == true, message.media.contains(where: { $0 is TelegramMediaExpiredContent }) {
+        updatedMedia = previousMessage.media
+    }
     if let previousPaidContent = previousMessage.media.first(where: { $0 is TelegramMediaPaidContent }) as? TelegramMediaPaidContent, case .full = previousPaidContent.extendedMedia.first {
         updatedMedia = previousMessage.media
     }

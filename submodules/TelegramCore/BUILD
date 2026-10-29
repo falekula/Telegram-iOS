@@ -72,3 +72,28 @@ ios_unit_test(
         "//visibility:public",
     ],
 )
+
+swift_library(
+    name = "PersonalForkTestsLib",
+    testonly = True,
+    srcs = ["Tests/PersonalForkTests.swift"],
+    deps = [
+        ":TelegramCore",
+        "//submodules/Postbox:Postbox",
+        "//submodules/TelegramApi:TelegramApi",
+    ],
+)
+
+ios_test_runner(
+    name = "PersonalForkTestRunner",
+    device_type = "iPhone 18 Pro",
+    os_version = "27.0",
+)
+
+ios_unit_test(
+    name = "PersonalForkTests",
+    minimum_os_version = "15.0",
+    runner = ":PersonalForkTestRunner",
+    deps = [":PersonalForkTestsLib"],
+    visibility = ["//visibility:public"],
+)

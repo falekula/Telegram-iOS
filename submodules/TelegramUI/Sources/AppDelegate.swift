@@ -2621,6 +2621,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
     }
     
     func handleOpenURL(_ url: URL) {
+        // The Home Screen launcher only needs to activate this app.
+        if url.scheme == "falekulagram", url.host == "open" { return }
         guard self.openUrlInProgress != url else {
             return
         }

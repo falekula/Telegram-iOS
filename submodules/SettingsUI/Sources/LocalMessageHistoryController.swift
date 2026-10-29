@@ -23,16 +23,25 @@ private struct LocalHistoryListEntry: ItemListNodeEntry {
     }
 }
 
-func localMessageHistoryController(context: AccountContext) -> ViewController {
+public func localMessageHistoryController(context: AccountContext, message: EngineMessage? = nil) -> ViewController {
     let records = Promise<[LocalMessageHistoryEntry]>()
-    records.set(context.engine.messages.localMessageHistory())
+    records.set(context.engine.messages.localMessageHistory() |> map { records in
+        guard let message else { return records }
+        return records.filter { $0.peerId == message.id.peerId.toInt64() && $0.messageId == message.id.id }
+    })
+    let currentMessage: Signal<EngineMessage?, NoError>
+    if let message {
+        currentMessage = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Messages.Message(id: message.id))
+    } else {
+        currentMessage = .single(nil)
+    }
     let actions = DisposableSet()
     var presentImpl: ((ViewController) -> Void)?
 
-    let state = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, records.get())
-    |> map { presentationData, records -> (ItemListControllerState, (ItemListNodeState, Any)) in
-        let clear = ItemListNavigationButton(content: .text("Очистить"), style: .regular, enabled: !records.isEmpty, action: {
-            presentImpl?(textAlertController(context: context, title: "Очистить историю?", text: "Сохранённые тексты правок и удалений будут удалены с этого устройства. Сообщения в чатах останутся.", actions: [
+    let state = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, records.get(), currentMessage)
+    |> map { presentationData, records, message -> (ItemListControllerState, (ItemListNodeState, Any)) in
+        let clear = ItemListNavigationButton(content: .text("Очистить"), style: .regular, enabled: true, action: {
+            presentImpl?(textAlertController(context: context, title: "Очистить историю?", text: "Вся локальная история будет очищена. Сохранённые копии удалённых сообщений и исчезающих фото пропадут из чатов. Обычные сообщения останутся.", actions: [
                 TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
                 TextAlertAction(type: .defaultDestructiveAction, title: "Очистить", action: {
                     actions.add((context.engine.messages.clearLocalMessageHistory()
@@ -41,7 +50,7 @@ func localMessageHistoryController(context: AccountContext) -> ViewController {
             ]))
         })
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("История сообщений"), leftNavigationButton: nil, rightNavigationButton: clear, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
-        var entries = [LocalHistoryListEntry(stableId: 0, text: "Локальные тексты сообщений до правок и удаления. Только полученные этой копией приложения. До 500 записей / 4 МБ; старые записи удаляются автоматически. Вложения, секретные и исчезающие сообщения не сохраняются.\n\nОнлайн, набор текста, прочтение и просмотры историй скрыты этой сборкой. Отправка сообщения, реакция или ответ на историю могут раскрыть активность.")]
+        var entries = [LocalHistoryListEntry(stableId: 0, text: "Удалённые сообщения остаются в чате с отметкой «Удалено». У изменённых сообщений доступно до 30 прошлых текстов через долгое нажатие → История изменений. Журнал ниже хранит до 500 записей / 4 МБ. Очистка удаляет локальные сохранённые копии, но не обычные сообщения на сервере.")]
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short
@@ -58,9 +67,15 @@ func localMessageHistoryController(context: AccountContext) -> ViewController {
                 text += "\n\nПосле правки:\n\(updatedText.isEmpty ? "[Без текста]" : updatedText)"
             }
             if record.hadMedia {
-                text += "\n\n[Было вложение; файл не сохранён]"
+                text += "\n\n[Вложение: откройте сохранённое сообщение в чате]"
             }
             entries.append(LocalHistoryListEntry(stableId: Int32(index + 1), text: text))
+        }
+        if let message, let local = message.attributes.compactMap({ $0 as? LocalMessageStateAttribute }).first, !local.previousTexts.isEmpty {
+            let start = Int32(entries.count + 1)
+            for (index, text) in local.previousTexts.enumerated() {
+                entries.append(LocalHistoryListEntry(stableId: start + Int32(index), text: "Версия \(index + 1)\n\n\(text.isEmpty ? "[Без текста]" : text)"))
+            }
         }
         return (controllerState, (ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks, animateChanges: false), ()))
     }

@@ -82,8 +82,17 @@ func managedAutoremoveMessageOperations(network: Network, postbox: Postbox, isRe
                     Logger.shared.log("Autoremove", "Performing autoremove for \(entry.messageId), isRemove: \(isRemove)")
 
                     if let message = transaction.getMessage(entry.messageId) {
+                        if shouldRetainEphemeralMedia(message) {
+                            _ = retainMessageLocally(transaction: transaction, message: message, deleted: false, ephemeral: true)
+                            transaction.clearTimestampBasedAttribute(id: entry.messageId, tag: tag)
+                            return
+                        }
                         if message.id.peerId.namespace == Namespaces.Peer.SecretChat || isRemove {
-                            _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: [entry.messageId])
+                            recordLocalMessageHistory(transaction: transaction, message: message, deleted: true)
+                            if !retainMessageLocally(transaction: transaction, message: message, deleted: true) {
+                                _internal_deleteMessages(transaction: transaction, mediaBox: postbox.mediaBox, ids: [entry.messageId])
+                            }
+                            transaction.clearTimestampBasedAttribute(id: entry.messageId, tag: tag)
                         } else {
                             transaction.updateMessage(message.id, update: { currentMessage in
                                 var storeForwardInfo: StoreMessageForwardInfo?
@@ -198,4 +207,3 @@ func managedAutoexpireStoryOperations(network: Network, postbox: Postbox) -> Sig
         }
     }
 }
-

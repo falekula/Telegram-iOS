@@ -6,6 +6,10 @@ import SwiftSignalKit
 func _internal_markMessageContentAsConsumedInteractively(postbox: Postbox, messageId: MessageId) -> Signal<Void, NoError> {
     return postbox.transaction { transaction -> Void in
         if let message = transaction.getMessage(messageId), message.flags.contains(.Incoming) {
+            if shouldRetainEphemeralMedia(message) {
+                _ = retainMessageLocally(transaction: transaction, message: message, deleted: false, ephemeral: true)
+                return
+            }
             var updateMessage = false
             var updatedAttributes = message.attributes
             
@@ -175,6 +179,10 @@ func _internal_markReactionsOrPollVotesAsSeenInteractively(postbox: Postbox, mes
 
 func markMessageContentAsConsumedRemotely(transaction: Transaction, messageId: MessageId, consumeDate: Int32?) {
     if let message = transaction.getMessage(messageId) {
+        if shouldRetainEphemeralMedia(message) {
+            _ = retainMessageLocally(transaction: transaction, message: message, deleted: false, ephemeral: true)
+            return
+        }
         var updateMessage = false
         var updatedAttributes = message.attributes
         var updatedMedia = message.media
@@ -262,4 +270,3 @@ func markMessageContentAsConsumedRemotely(transaction: Transaction, messageId: M
         }
     }
 }
-

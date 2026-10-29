@@ -4435,6 +4435,13 @@ func replayFinalState(
                     }
                 }
             
+                for index in messages.indices {
+                    if case let .Id(id) = messages[index].id, let previous = transaction.getMessage(id) {
+                        recordLocalMessageHistory(transaction: transaction, message: previous, deleted: false, updatedText: messages[index].text)
+                        messages[index] = mergedServerMessageUpdate(previous: previous, updated: messages[index])
+                    }
+                    messages[index] = prepareRetainedIncomingPhoto(transaction: transaction, message: messages[index])
+                }
                 let _ = transaction.addMessages(messages, location: location)
                 if case .UpperHistoryBlock = location {
                     for message in messages {
@@ -4622,40 +4629,41 @@ func replayFinalState(
             case let .DeleteEphemeralMessages(peerId, ids):
                 deleteEphemeralMessages(transaction: transaction, peerId: peerId, ids: ids)
             case let .DeleteMessagesWithGlobalIds(ids):
-                for id in transaction.messageIdsForGlobalIds(ids) {
-                    if let message = transaction.getMessage(id) {
-                        recordLocalMessageHistory(transaction: transaction, message: message, deleted: true)
-                    }
+                let removed = transaction.messageIdsForGlobalIds(ids).filter { id in
+                    guard let message = transaction.getMessage(id) else { return true }
+                    recordLocalMessageHistory(transaction: transaction, message: message, deleted: true)
+                    return !retainMessageLocally(transaction: transaction, message: message, deleted: true, ephemeral: shouldRetainEphemeralMedia(message))
                 }
-                var resourceIds: [MediaResourceId] = []
-                transaction.deleteMessagesWithGlobalIds(ids, forEachMedia: { media in
-                    addMessageMediaResourceIdsToRemove(media: media, resourceIds: &resourceIds)
-                })
-                if !resourceIds.isEmpty {
-                    let _ = mediaBox.removeCachedResources(Array(Set(resourceIds)), force: true).start()
-                }
-                deletedMessageIds.append(contentsOf: ids.map { .global($0) })
+                _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: removed)
+                deletedMessageIds.append(contentsOf: removed.map { .messageId($0) })
             case let .DeleteMessages(ids):
-                for id in ids {
-                    if let message = transaction.getMessage(id) {
-                        recordLocalMessageHistory(transaction: transaction, message: message, deleted: true)
-                    }
+                let removed = ids.filter { id in
+                    guard let message = transaction.getMessage(id) else { return true }
+                    recordLocalMessageHistory(transaction: transaction, message: message, deleted: true)
+                    return !retainMessageLocally(transaction: transaction, message: message, deleted: true, ephemeral: shouldRetainEphemeralMedia(message))
                 }
-                _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: ids, manualAddMessageThreadStatsDifference: { id, add, remove in
+                _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: removed, manualAddMessageThreadStatsDifference: { id, add, remove in
                     addMessageThreadStatsDifference(threadKey: id, remove: remove, addedMessagePeer: nil, addedMessageId: nil, isOutgoing: false)
                 })
-                deletedMessageIds.append(contentsOf: ids.map { .messageId($0) })
+                deletedMessageIds.append(contentsOf: removed.map { .messageId($0) })
             case let .UpdateMinAvailableMessage(id):
                 if let message = transaction.getMessage(id) {
                     updatePeerChatInclusionWithMinTimestamp(transaction: transaction, id: id.peerId, minTimestamp: message.timestamp, forceRootGroupIfNotExists: false)
                 }
-                var resourceIds: [MediaResourceId] = []
-                transaction.deleteMessagesInRange(peerId: id.peerId, namespace: id.namespace, minId: 1, maxId: id.id, forEachMedia: { media in
-                    addMessageMediaResourceIdsToRemove(media: media, resourceIds: &resourceIds)
+                // A server history truncation must not discard locally retained copies.
+                var candidates: [Message] = []
+                transaction.withAllMessages(peerId: id.peerId, namespace: id.namespace, { message in
+                    if message.id.id >= 1 && message.id.id <= id.id { candidates.append(message) }
+                    return true
                 })
-                if !resourceIds.isEmpty {
-                    let _ = mediaBox.removeCachedResources(Array(Set(resourceIds)), force: true).start()
+                var removed: [MessageId] = []
+                for message in candidates {
+                    recordLocalMessageHistory(transaction: transaction, message: message, deleted: true)
+                    if !retainMessageLocally(transaction: transaction, message: message, deleted: true, ephemeral: shouldRetainEphemeralMedia(message)) {
+                        removed.append(message.id)
+                    }
                 }
+                _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: removed)
             case let .UpdatePeerChatInclusion(peerId, groupId, changedGroup):
                 if shouldExcludePeerFromChatList(transaction: transaction, peerId: peerId) {
                     transaction.updatePeerChatListInclusion(peerId, inclusion: .notIncluded)

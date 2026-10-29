@@ -74,6 +74,17 @@ jobs:
             ditto -c -k --keepParent build/dsyms build/artifacts/Telegram-dSYMs.zip
           fi
 
+      - name: Test message retention and real API privacy routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u build-system/Make/Make.py \
+            test \
+            --configurationPath=build/private-sideload-configuration.json \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --target=//submodules/TelegramCore:PersonalForkTests \
+            2>&1 | tee -a build/build.log
+
       - name: Encrypt private build artifacts
         env:
           TELEGRAM_ARTIFACT_PASSWORD: ${{ secrets.TELEGRAM_ARTIFACT_PASSWORD }}
@@ -101,6 +112,9 @@ jobs:
           if path.exists() and secret:
               path.write_text(path.read_text(errors='replace').replace(secret, '[REDACTED]'))
           Path('build/private-sideload-configuration.json').unlink(missing_ok=True)
+          # A failed test must not leave an unencrypted private IPA on the runner.
+          for artifact in ('Telegram.ipa', 'Telegram-dSYMs.zip'):
+              Path('build/artifacts', artifact).unlink(missing_ok=True)
           PYCODE
 
       - name: Upload IPA (requires re-signing before installation)
