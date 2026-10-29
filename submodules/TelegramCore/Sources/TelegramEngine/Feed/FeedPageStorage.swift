@@ -20,7 +20,8 @@ func storeFeedMessages(transaction: Transaction, accountPeerId: PeerId, messages
         guard let storeMessage = StoreMessage(apiMessage: apiMessage, accountPeerId: accountPeerId, peerIsForum: peerIsForum), case let .Id(id) = storeMessage.id else {
             continue
         }
-        if transaction.getMessage(id) != nil {
+        if let previousMessage = transaction.getMessage(id) {
+            recordLocalMessageHistory(transaction: transaction, message: previousMessage, deleted: false, updatedText: storeMessage.text)
             transaction.updateMessage(id, update: { previousMessage in
                 return .update(mergedServerMessageUpdate(previous: previousMessage, updated: storeMessage))
             })
