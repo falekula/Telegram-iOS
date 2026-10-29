@@ -644,6 +644,7 @@ public class ChatMessageInstantVideoItemNode: ChatMessageItemView, ASGestureReco
                 if let strongSelf = weakSelf.value {
                     strongSelf.contextSourceNode.frame = CGRect(origin: CGPoint(), size: layoutSize)
                     strongSelf.containerNode.frame = CGRect(origin: CGPoint(), size: layoutSize)
+                    strongSelf.containerNode.alpha = personalForkMessageOpacity(EngineMessage(item.message))
                     strongSelf.contextSourceNode.contentNode.frame = CGRect(origin: CGPoint(), size: layoutSize)
                     strongSelf.messageAccessibilityArea.frame = CGRect(origin: CGPoint(), size: layoutSize)
                     

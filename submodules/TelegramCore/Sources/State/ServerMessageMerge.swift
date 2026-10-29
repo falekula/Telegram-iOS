@@ -10,14 +10,15 @@ func mergedServerMessageUpdate(previous previousMessage: Message, updated messag
     var updatedFlags = message.flags
     var updatedLocalTags = message.localTags
     var updatedAttributes = message.attributes
-    let local = previousMessage.attributes.compactMap { $0 as? LocalMessageStateAttribute }.first
+    let keepsLocalHistory = personalForkIsPersonalChat(previousMessage)
+    let local = keepsLocalHistory ? previousMessage.attributes.compactMap { $0 as? LocalMessageStateAttribute }.first : nil
     var versions = local?.previousTexts ?? []
-    if previousMessage.text != message.text, versions.last != previousMessage.text {
+    if keepsLocalHistory, previousMessage.text != message.text, versions.last != previousMessage.text {
         versions.append(previousMessage.text)
     }
     if local != nil || !versions.isEmpty {
         updatedAttributes.removeAll { $0 is LocalMessageStateAttribute }
-        updatedAttributes.append(LocalMessageStateAttribute(deleted: local?.deleted ?? false, retainedMedia: local?.retainedMedia ?? false, previousTexts: versions))
+        updatedAttributes.append(LocalMessageStateAttribute(deleted: local?.deleted ?? false, retainedMedia: local?.retainedMedia ?? false, previousTexts: versions, originalMediaTimeout: local?.originalMediaTimeout ?? originalDisappearingMediaTimeout(message.attributes)))
     }
     if previousMessage.localTags.contains(.OutgoingLiveLocation) {
         updatedLocalTags.insert(.OutgoingLiveLocation)

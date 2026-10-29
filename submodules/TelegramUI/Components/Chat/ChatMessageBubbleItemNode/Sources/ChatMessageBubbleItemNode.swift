@@ -3966,6 +3966,18 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         strongSelf.mainContextSourceNode.frame = CGRect(origin: CGPoint(), size: layout.contentSize)
         strongSelf.mainContextSourceNode.contentNode.frame = CGRect(origin: CGPoint(), size: layout.contentSize)
         strongSelf.contentContainersWrapperNode.frame = CGRect(origin: CGPoint(), size: layout.contentSize)
+
+        // Apply opacity to the common bubble container so its background and content fade
+        // together. Always reset it when a list node is rebound to an ordinary message.
+        // Mixed albums remain opaque: dimming the entire album would mark live media deleted.
+        let localStates = item.content.map { entry -> LocalMessageStateAttribute? in
+            let message = EngineMessage(entry.0)
+            guard personalForkIsPersonalChat(message) else { return nil }
+            return message.attributes.compactMap { $0 as? LocalMessageStateAttribute }.first
+        }
+        let allDeleted = !localStates.isEmpty && localStates.allSatisfy { $0?.deleted == true }
+        let allEdited = !localStates.isEmpty && localStates.allSatisfy { $0?.previousTexts.isEmpty == false }
+        strongSelf.mainContainerNode.alpha = allDeleted ? 0.78 : (allEdited ? 0.94 : 1.0)
         
         strongSelf.appliedItem = item
         strongSelf.appliedForwardInfo = ChatMessageAppliedForwardInfo(messageId: item.content.firstMessage.id, source: forwardSource, authorSignature: forwardAuthorSignature)

@@ -62,6 +62,8 @@ jobs:
           test -s bazel-bin/Telegram/Telegram.ipa
           cp bazel-bin/Telegram/Telegram.ipa build/artifacts/Telegram.ipa
           unzip -tq build/artifacts/Telegram.ipa
+          python3 build-system/verify-personal-ipa.py build/artifacts/Telegram.ipa \
+            --expected-build="$((100000 + GITHUB_RUN_NUMBER))"
 
       - name: Collect debug symbols
         if: success()

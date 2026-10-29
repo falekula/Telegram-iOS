@@ -49,8 +49,8 @@ public func localMessageHistoryController(context: AccountContext, message: Engi
                 })
             ]))
         })
-        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("История сообщений"), leftNavigationButton: nil, rightNavigationButton: clear, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
-        var entries = [LocalHistoryListEntry(stableId: 0, text: "Удалённые сообщения остаются в чате с отметкой «Удалено». У изменённых сообщений доступно до 30 прошлых текстов через долгое нажатие → История изменений. Журнал ниже хранит до 500 записей / 4 МБ. Очистка удаляет локальные сохранённые копии, но не обычные сообщения на сервере.")]
+        let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Личная история"), leftNavigationButton: nil, rightNavigationButton: clear, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
+        var entries = [LocalHistoryListEntry(stableId: 0, text: "Только личные переписки. Удалённые сообщения остаются в чате полупрозрачными с корзиной; у правок появляется карандаш. Зажмите сообщение — прошлый текст и его копирование доступны прямо в меню. До 30 версий на сообщение; журнал ниже — до 500 записей / 4 МБ. Очистка убирает локальные копии, а обычные сообщения на сервере сохраняет. Загруженные файлы можно отдельно очистить в Данные и память → Использование памяти.")]
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short

@@ -1,6 +1,5 @@
 import SwiftSignalKit
 import Postbox
-internal import TelegramApi
 
 public extension TelegramEngine {
     final class Privacy {
@@ -8,15 +7,6 @@ public extension TelegramEngine {
 
         init(account: Account) {
             self.account = account
-        }
-
-        public func applyPersonalForkPrivacy() -> Signal<Bool, NoError> {
-            return self.account.network.request(Api.functions.account.setPrivacy(key: .inputPrivacyKeyStatusTimestamp, rules: [.inputPrivacyValueDisallowAll]))
-            |> mapToSignal { _ in
-                return self.account.network.request(Api.functions.account.updateStatus(offline: .boolTrue))
-            }
-            |> map { _ in true }
-            |> `catch` { _ in .single(false) }
         }
 
         public func requestUpdatePeerIsBlocked(peerId: PeerId, isBlocked: Bool, sourceMessageId: MessageId? = nil) -> Signal<Void, NoError> {

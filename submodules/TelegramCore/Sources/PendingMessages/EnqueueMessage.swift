@@ -863,6 +863,7 @@ public func resendMessages(account: Account, messageIds: [MessageId]) -> Signal<
 }
 
 func enqueueMessages(transaction: Transaction, account: Account, peerId: PeerId, messages: [(Bool, EnqueueMessage)], disableAutoremove: Bool = false, transformGroupingKeysWithPeerId: Bool = false) -> [MessageId?] {
+    let messages = personalForkScheduleMessages(messages, peerId: peerId, now: account.network.getApproximateRemoteTimestamp())
     /**
      * If it is a support account, mark messages as read here as they are
      * not marked as read when chat is opened.

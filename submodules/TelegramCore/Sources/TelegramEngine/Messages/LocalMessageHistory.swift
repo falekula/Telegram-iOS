@@ -5,6 +5,7 @@ import SwiftSignalKit
 private let localMessageHistoryKey = ValueBoxKey("falekula.local-message-history.v1")
 
 func recordLocalMessageHistory(transaction: Transaction, message: Message, deleted: Bool, updatedText: String? = nil) {
+    guard personalForkIsPersonalPeer(message.id.peerId, peer: transaction.getPeer(message.id.peerId)) else { return }
     guard message.id.namespace == Namespaces.Message.Cloud || message.id.namespace == Namespaces.Message.SecretIncoming else {
         return
     }
@@ -26,6 +27,15 @@ func recordLocalMessageHistory(transaction: Transaction, message: Message, delet
         updatedText: updatedText,
         hadMedia: !message.media.isEmpty
     ))
+    transaction.setPreferencesEntry(key: localMessageHistoryKey, value: PreferencesEntry(state))
+}
+
+func migrateLocalMessageHistoryToPersonalChats(transaction: Transaction) {
+    guard var state = transaction.getPreferencesEntry(key: localMessageHistoryKey)?.get(LocalMessageHistoryState.self) else { return }
+    state.entries.removeAll { entry in
+        let peerId = PeerId(entry.peerId)
+        return !personalForkIsPersonalPeer(peerId, peer: transaction.getPeer(peerId))
+    }
     transaction.setPreferencesEntry(key: localMessageHistoryKey, value: PreferencesEntry(state))
 }
 

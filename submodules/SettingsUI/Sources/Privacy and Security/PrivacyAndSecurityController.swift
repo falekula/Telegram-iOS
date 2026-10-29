@@ -1608,7 +1608,7 @@ public func privacyAndSecurityController(
             canAutoarchive = hasAutoarchive
         }
         
-        var rightNavigationButton: ItemListNavigationButton? = ItemListNavigationButton(content: .text("Форк"), style: .regular, enabled: true, action: {
+        var rightNavigationButton: ItemListNavigationButton? = ItemListNavigationButton(content: .text("xxxgram"), style: .regular, enabled: true, action: {
             pushControllerImpl?(personalForkSettingsController(context: context), true)
         })
         if privacySettings == nil || state.updatingAccountTimeoutValue != nil {

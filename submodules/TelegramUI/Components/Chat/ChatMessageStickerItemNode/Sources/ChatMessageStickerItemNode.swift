@@ -1061,6 +1061,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                     
                     strongSelf.messageAccessibilityArea.frame = CGRect(origin: CGPoint(), size: layoutSize)
                     strongSelf.containerNode.frame = CGRect(origin: CGPoint(), size: layoutSize)
+                    strongSelf.containerNode.alpha = personalForkMessageOpacity(EngineMessage(item.message))
                     strongSelf.contextSourceNode.frame = CGRect(origin: CGPoint(), size: layoutSize)
                     strongSelf.contextSourceNode.contentNode.frame = CGRect(origin: CGPoint(), size: layoutSize)
                     strongSelf.contextSourceNode.contentRect = strongSelf.imageNode.frame

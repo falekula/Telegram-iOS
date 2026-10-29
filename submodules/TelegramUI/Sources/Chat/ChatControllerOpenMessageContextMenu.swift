@@ -18,7 +18,6 @@ import TopMessageReactions
 import TelegramNotices
 import PresentationDataUtils
 import ChatPresentationInterfaceState
-import SettingsUI
 
 extension ChatControllerImpl {
     func openMessageContextMenu(message: EngineMessage, selectAll: Bool, node: ASDisplayNode, frame: CGRect, anyRecognizer: UIGestureRecognizer?, location: CGPoint?) -> Void {
@@ -64,13 +63,63 @@ extension ChatControllerImpl {
                 var (allowedReactions, _) = allowedReactionsAndStars
                 
                 var actions = actions
-                if case let .list(items) = actions.content {
+                if personalForkCanCopyMessage(message, chatIsProtected: self.presentationInterfaceState.copyProtectionEnabled), case let .list(items) = actions.content {
                     var items = items
-                    items.insert(.action(ContextMenuActionItem(text: "История изменений", icon: { _ in nil }, action: { [weak self] _, finish in
+                    items.insert(.action(ContextMenuActionItem(text: "Отправить копию…", icon: { theme in
+                        return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Forward"), color: theme.contextMenu.primaryColor)
+                    }, action: { [weak self] _, finish in
                         finish(.default)
                         guard let self else { return }
-                        self.push(localMessageHistoryController(context: self.context, message: message))
+                        personalForkCopyMessage(selfController: self, message: message)
                     })), at: 0)
+                    actions.content = .list(items)
+                }
+                if personalForkIsPersonalChat(message), let local = message.attributes.compactMap({ $0 as? LocalMessageStateAttribute }).first, case let .list(items) = actions.content {
+                    var items = items
+                    var localItems: [ContextMenuItem] = []
+                    if local.deleted {
+                        localItems.append(.action(ContextMenuActionItem(text: "Удалено в Telegram\nКопия сохранена только на этом устройстве", textColor: .disabled, textLayout: .multiline, textFont: .small, icon: { theme in
+                            return generateTintedImage(image: UIImage(systemName: "trash"), color: theme.contextMenu.secondaryColor)
+                        }, action: { _, _ in })))
+                    }
+                    if let timeout = local.originalMediaTimeout {
+                        let mode = timeout == Int32.max ? "Отправлено на один просмотр" : "Отправлено на \(timeout) с"
+                        localItems.append(.action(ContextMenuActionItem(text: mode + "\nКопия сохранена на этом устройстве", textColor: .disabled, textLayout: .multiline, textFont: .small, icon: { theme in
+                            return generateTintedImage(image: UIImage(systemName: "timer"), color: theme.contextMenu.secondaryColor)
+                        }, action: { _, _ in })))
+                    } else if local.retainedMedia {
+                        localItems.append(.action(ContextMenuActionItem(text: "Исчезающее вложение сохранено\nИсходный таймер неизвестен для старой копии", textColor: .disabled, textLayout: .multiline, textFont: .small, icon: { _ in nil }, action: { _, _ in })))
+                    }
+                    if let previousText = local.previousTexts.last {
+                        let preview = previousText.isEmpty ? "[Без текста]" : String(previousText.prefix(240)) + (previousText.count > 240 ? "…" : "")
+                        localItems.append(.action(ContextMenuActionItem(text: "До изменения · нажмите, чтобы скопировать\n" + preview, textLayout: .multiline, textFont: .small, icon: { theme in
+                            return generateTintedImage(image: UIImage(systemName: "pencil"), color: theme.contextMenu.primaryColor)
+                        }, action: { _, finish in
+                            UIPasteboard.general.string = previousText
+                            finish(.default)
+                        })))
+                        localItems.append(.action(ContextMenuActionItem(text: "Все прошлые версии: \(local.previousTexts.count)", icon: { theme in
+                            return generateTintedImage(image: UIImage(systemName: "clock.arrow.circlepath"), color: theme.contextMenu.primaryColor)
+                        }, action: { controller, _ in
+                            var versions: [ContextMenuItem] = [.action(ContextMenuActionItem(text: presentationData.strings.Common_Back, icon: { theme in
+                                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Back"), color: theme.contextMenu.primaryColor)
+                            }, iconPosition: .left, action: { controller, _ in controller?.popItems() })), .separator]
+                            for (index, previousText) in local.previousTexts.enumerated().reversed() {
+                                let preview = previousText.isEmpty ? "[Без текста]" : String(previousText.prefix(600)) + (previousText.count > 600 ? "…" : "")
+                                versions.append(.action(ContextMenuActionItem(text: "Версия \(index + 1) · скопировать\n" + preview, textLayout: .multiline, textFont: .small, icon: { theme in
+                                    return generateTintedImage(image: UIImage(systemName: "doc.on.doc"), color: theme.contextMenu.primaryColor)
+                                }, action: { _, finish in
+                                    UIPasteboard.general.string = previousText
+                                    finish(.default)
+                                })))
+                            }
+                            controller?.pushItems(items: .single(ContextController.Items(content: .list(versions))))
+                        })))
+                    }
+                    if !localItems.isEmpty {
+                        localItems.append(.separator)
+                        items.insert(contentsOf: localItems, at: 0)
+                    }
                     actions.content = .list(items)
                 }
                 switch actions.content {

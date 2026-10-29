@@ -327,6 +327,7 @@ filegroup(
 )
 
 alternate_icon_folders = [
+    "xxxgram",
     "BlackIcon",
     "BlackClassicIcon",
     "BlackFilledIcon",
@@ -431,6 +432,7 @@ plist_fragment(
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>telegram</string>
+                <string>falekulagram</string>
             </array>
         </dict>
         <dict>
@@ -641,7 +643,7 @@ plist_fragment(
     template =
     """
     <key>CFBundleDisplayName</key>
-    <string>Telegram</string>
+    <string>xxxgram</string>
     """
 )
 
@@ -1696,11 +1698,11 @@ plist_fragment(
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Telegram</string>
+    <string>xxxgram</string>
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}</string>
     <key>CFBundleName</key>
-    <string>Telegram</string>
+    <string>xxxgram</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleSignature</key>

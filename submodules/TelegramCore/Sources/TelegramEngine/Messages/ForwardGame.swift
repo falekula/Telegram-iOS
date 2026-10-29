@@ -14,6 +14,10 @@ func _internal_sendBotGame(account: Account, botPeerId: PeerId, game: String, to
         }
 
         var flags: Int32 = 1 << 7
+        let scheduleTime: Int32? = SideloadPrivacy.scheduleOutgoingMessages ? account.network.getApproximateRemoteTimestamp() + SideloadPrivacy.outgoingScheduleDelay(mediaBytes: nil) : nil
+        if scheduleTime != nil {
+            flags |= 1 << 10
+        }
         var replyTo: Api.InputReplyTo?
         if let threadId {
             flags |= 1 << 0
@@ -22,7 +26,7 @@ func _internal_sendBotGame(account: Account, botPeerId: PeerId, game: String, to
             replyTo = .inputReplyToMessage(.init(flags: replyFlags, replyToMsgId: threadMessageId, topMsgId: threadMessageId, replyToPeerId: nil, quoteText: nil, quoteEntities: nil, quoteOffset: nil, monoforumPeerId: nil, todoItemId: nil, pollOption: nil, quoteRich: nil))
         }
 
-        return account.network.request(Api.functions.messages.sendMedia(flags: flags, peer: inputPeer, replyTo: replyTo, media: .inputMediaGame(.init(id: .inputGameShortName(.init(botId: inputBot, shortName: game)))), message: "", randomId: Int64.random(in: Int64.min ... Int64.max), replyMarkup: nil, entities: nil, scheduleDate: nil, scheduleRepeatPeriod: nil, sendAs: nil, quickReplyShortcut: nil, effect: nil, allowPaidStars: nil, suggestedPost: nil))
+        return account.network.request(Api.functions.messages.sendMedia(flags: flags, peer: inputPeer, replyTo: replyTo, media: .inputMediaGame(.init(id: .inputGameShortName(.init(botId: inputBot, shortName: game)))), message: "", randomId: Int64.random(in: Int64.min ... Int64.max), replyMarkup: nil, entities: nil, scheduleDate: scheduleTime, scheduleRepeatPeriod: nil, sendAs: nil, quickReplyShortcut: nil, effect: nil, allowPaidStars: nil, suggestedPost: nil), automaticFloodWait: !SideloadPrivacy.scheduleOutgoingMessages)
         |> mapError { _ -> SendBotGameError in
             return .generic
         }
@@ -39,6 +43,10 @@ func _internal_forwardGameWithScore(account: Account, messageId: MessageId, to p
     return account.postbox.transaction { transaction -> Signal<Void, NoError> in
         if let _ = transaction.getMessage(messageId), let fromPeer = transaction.getPeer(messageId.peerId), let fromInputPeer = apiInputPeer(fromPeer), let toPeer = transaction.getPeer(peerId), let toInputPeer = apiInputPeer(toPeer) {
             var flags: Int32 = 1 << 8
+            let scheduleTime: Int32? = SideloadPrivacy.scheduleOutgoingMessages ? account.network.getApproximateRemoteTimestamp() + SideloadPrivacy.outgoingScheduleDelay(mediaBytes: nil) : nil
+            if scheduleTime != nil {
+                flags |= 1 << 10
+            }
             
             var sendAsInputPeer: Api.InputPeer?
             if let sendAsPeerId = sendAsPeerId, let sendAsPeer = transaction.getPeer(sendAsPeerId), let inputPeer = apiInputPeerOrSelf(sendAsPeer, accountPeerId: account.peerId) {
@@ -46,7 +54,7 @@ func _internal_forwardGameWithScore(account: Account, messageId: MessageId, to p
                 flags |= (1 << 13)
             }
             
-            return account.network.request(Api.functions.messages.forwardMessages(flags: flags, fromPeer: fromInputPeer, id: [messageId.id], randomId: [Int64.random(in: Int64.min ... Int64.max)], toPeer: toInputPeer, topMsgId: threadId.flatMap { Int32(clamping: $0) }, replyTo: nil, scheduleDate: nil, scheduleRepeatPeriod: nil, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, videoTimestamp: nil, allowPaidStars: nil, suggestedPost: nil))
+            return account.network.request(Api.functions.messages.forwardMessages(flags: flags, fromPeer: fromInputPeer, id: [messageId.id], randomId: [Int64.random(in: Int64.min ... Int64.max)], toPeer: toInputPeer, topMsgId: threadId.flatMap { Int32(clamping: $0) }, replyTo: nil, scheduleDate: scheduleTime, scheduleRepeatPeriod: nil, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, videoTimestamp: nil, allowPaidStars: nil, suggestedPost: nil), automaticFloodWait: !SideloadPrivacy.scheduleOutgoingMessages)
             |> map(Optional.init)
             |> `catch` { _ -> Signal<Api.Updates?, NoError> in
                 return .single(nil)

@@ -2197,6 +2197,15 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
                     }
                 }
                 
+                if !isScheduledMessages, interfaceState.interfaceState.editMessage == nil,
+                   let peerId = interfaceState.renderedPeer?.peer?.id,
+                   placeholder == interfaceState.strings.Conversation_InputTextPlaceholder {
+                    if peerId.namespace == Namespaces.Peer.SecretChat {
+                        placeholder = "Отправка отключена"
+                    } else if peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup || peerId.namespace == Namespaces.Peer.CloudChannel {
+                        placeholder = "Сообщение · от 12 с"
+                    }
+                }
                 updatedPlaceholder = placeholder
                 
                 self.sendActionButtons.sendButtonLongPressEnabled = !isScheduledMessages

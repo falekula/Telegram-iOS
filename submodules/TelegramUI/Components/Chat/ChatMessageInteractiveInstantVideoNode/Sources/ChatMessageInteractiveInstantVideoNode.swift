@@ -537,6 +537,8 @@ public class ChatMessageInteractiveInstantVideoNode: ASDisplayNode {
             let dateFormat: MessageTimestampStatusFormat
             if item.presentationData.isPreview {
                 dateFormat = .full
+            } else if statusDisplayType == .free, item.message.attributes.contains(where: { $0 is LocalMessageStateAttribute }) {
+                dateFormat = .minimal
             } else {
                 dateFormat = .regular
             }
@@ -843,6 +845,9 @@ public class ChatMessageInteractiveInstantVideoNode: ASDisplayNode {
                         }
                     }
                     
+                    if incoming && transcribedText == nil {
+                        displayTranscribe = false
+                    }
                     if displayTranscribe, let durationBlurColor = durationBlurColor {
                         var added = false
                         let audioTranscriptionButton: ComponentHostView<Empty>
@@ -948,6 +953,8 @@ public class ChatMessageInteractiveInstantVideoNode: ASDisplayNode {
                     
                     if case .customChatContents = item.associatedData.subject {
                         strongSelf.dateAndStatusNode.isHidden = true
+                    } else {
+                        strongSelf.dateAndStatusNode.isHidden = false
                     }
                     
                     if let videoNode = strongSelf.videoNode {

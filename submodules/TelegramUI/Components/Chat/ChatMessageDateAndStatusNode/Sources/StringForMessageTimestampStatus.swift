@@ -13,6 +13,14 @@ public enum MessageTimestampStatusFormat {
     case minimal
 }
 
+/// Applied on every bind, including ordinary messages, so reused media nodes reset.
+public func personalForkMessageOpacity(_ message: EngineMessage) -> CGFloat {
+    guard personalForkIsPersonalChat(message), let local = message.attributes.compactMap({ $0 as? LocalMessageStateAttribute }).first else {
+        return 1.0
+    }
+    return local.deleted ? 0.78 : (local.previousTexts.isEmpty ? 1.0 : 0.94)
+}
+
 private func dateStringForDay(strings: PresentationStrings, dateTimeFormat: PresentationDateTimeFormat, timestamp: Int32) -> String {
     var t: time_t = time_t(timestamp)
     var timeinfo: tm = tm()
@@ -251,10 +259,21 @@ public func stringForMessageTimestampStatus(
         }
     }
     
-    if let local = message.attributes.compactMap({ $0 as? LocalMessageStateAttribute }).first {
-        if local.deleted { dateText = "Удалено · " + dateText }
-        else if local.retainedMedia { dateText = "Сохранено · " + dateText }
-        else if !local.previousTexts.isEmpty { dateText = "История: \(local.previousTexts.count) · " + dateText }
+    if personalForkIsPersonalChat(message), let local = message.attributes.compactMap({ $0 as? LocalMessageStateAttribute }).first {
+        var labels: [String] = []
+        let compact = format == .minimal
+        // Text presentation selectors keep the badges monochrome at the timestamp's font size.
+        if local.deleted { labels.append(compact ? "🗑︎" : "🗑︎ удалено") }
+        if !local.previousTexts.isEmpty { labels.append("✎ \(local.previousTexts.count)") }
+        if let timeout = local.originalMediaTimeout {
+            labels.append(timeout == Int32.max ? (compact ? "①" : "① просмотр") : "◷ \(timeout) с")
+        } else if local.retainedMedia {
+            // Older retained messages predate the original-timer metadata.
+            labels.append(compact ? "↓" : "↓ сохранено")
+        }
+        if !labels.isEmpty {
+            dateText = labels.joined(separator: " · ") + " · " + dateText
+        }
     }
     return dateText
 }

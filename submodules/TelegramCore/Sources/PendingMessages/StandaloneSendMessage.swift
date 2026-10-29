@@ -126,6 +126,11 @@ public func standaloneSendEnqueueMessages(
     threadId: Int64?,
     messages: [StandaloneSendEnqueueMessage]
 ) -> Signal<StandaloneSendMessageStatus, StandaloneSendMessagesError> {
+    if SideloadPrivacy.scheduleOutgoingMessages && peerId.namespace == Namespaces.Peer.SecretChat {
+        // Standalone sharing has a separate secret-chat sender that bypasses
+        // PendingMessageManager. It cannot schedule without revealing activity.
+        return .fail(StandaloneSendMessagesError(peerId: peerId, reason: .none))
+    }
     struct MessageResult {
         var result: PendingMessageUploadedContentResult
         var media: [Media]
@@ -347,6 +352,15 @@ private func enqueueSecretChatUploadedMessageContent(
     return updatedState
 }
 
+func personalForkStandaloneSchedule(attributes: [MessageAttribute], mediaBytes: Int64?, now: Int32) -> OutgoingScheduleInfoMessageAttribute? {
+    if let existing = attributes.compactMap({ $0 as? OutgoingScheduleInfoMessageAttribute }).first {
+        guard existing.isPersonalForkAutomatic else { return existing }
+        return OutgoingScheduleInfoMessageAttribute(scheduleTime: max(existing.scheduleTime, now + SideloadPrivacy.outgoingScheduleDelay(mediaBytes: mediaBytes)), repeatPeriod: existing.repeatPeriod, isPersonalForkAutomatic: true)
+    }
+    guard SideloadPrivacy.scheduleOutgoingMessages else { return nil }
+    return OutgoingScheduleInfoMessageAttribute(scheduleTime: now + SideloadPrivacy.outgoingScheduleDelay(mediaBytes: mediaBytes), repeatPeriod: nil, isPersonalForkAutomatic: true)
+}
+
 private func sendUploadedMessageContent(
     postbox: Postbox,
     network: Network,
@@ -360,6 +374,9 @@ private func sendUploadedMessageContent(
     threadId: Int64?
 ) -> Signal<Never, StandaloneSendMessagesError> {
     return postbox.transaction { transaction -> Signal<Never, StandaloneSendMessagesError> in
+        let schedule = personalForkStandaloneSchedule(attributes: attributes, mediaBytes: media.compactMap { ($0 as? TelegramMediaFile)?.size }.max(), now: network.getApproximateRemoteTimestamp())
+        let attributes = attributes.filter { !($0 is OutgoingScheduleInfoMessageAttribute) } + (schedule.map { [$0 as MessageAttribute] } ?? [])
+        let automaticFloodWait = schedule?.isPersonalForkAutomatic != true
         if peerId.namespace == Namespaces.Peer.SecretChat {
             return .fail(StandaloneSendMessagesError(peerId: peerId, reason: .none))
         } else if let peer = transaction.getPeer(peerId), let inputPeer = apiInputPeer(peer) {
@@ -519,7 +536,7 @@ private func sendUploadedMessageContent(
                         flags |= 1 << 22
                     }
                 
-                    sendMessageRequest = network.requestWithAdditionalInfo(Api.functions.messages.sendMessage(flags: flags, peer: inputPeer, replyTo: replyTo, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost, richMessage: apiRichMessage), info: .acknowledgement, tag: dependencyTag)
+                    sendMessageRequest = network.requestWithAdditionalInfo(Api.functions.messages.sendMessage(flags: flags, peer: inputPeer, replyTo: replyTo, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost, richMessage: apiRichMessage), info: .acknowledgement, tag: dependencyTag, automaticFloodWait: automaticFloodWait)
                 case let .media(inputMedia, text):
                     if bubbleUpEmojiOrStickersets {
                         flags |= Int32(1 << 15)
@@ -554,7 +571,7 @@ private func sendUploadedMessageContent(
                         flags |= 1 << 22
                     }
                     
-                    sendMessageRequest = network.request(Api.functions.messages.sendMedia(flags: flags, peer: inputPeer, replyTo: replyTo, media: inputMedia, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost), tag: dependencyTag)
+                    sendMessageRequest = network.request(Api.functions.messages.sendMedia(flags: flags, peer: inputPeer, replyTo: replyTo, media: inputMedia, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost), tag: dependencyTag, automaticFloodWait: automaticFloodWait)
                     |> map(NetworkRequestResult.result)
                 case let .forward(sourceInfo):
                     if topMsgId != nil {
@@ -565,7 +582,7 @@ private func sendUploadedMessageContent(
                     }
                 
                     if let forwardSourceInfoAttribute = forwardSourceInfoAttribute, let sourcePeer = transaction.getPeer(forwardSourceInfoAttribute.messageId.peerId), let sourceInputPeer = apiInputPeer(sourcePeer) {
-                        sendMessageRequest = network.request(Api.functions.messages.forwardMessages(flags: flags, fromPeer: sourceInputPeer, id: [sourceInfo.messageId.id], randomId: [uniqueId], toPeer: inputPeer, topMsgId: topMsgId, replyTo: nil, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, videoTimestamp: videoTimestamp, allowPaidStars: allowPaidStars, suggestedPost: nil), tag: dependencyTag)
+                        sendMessageRequest = network.request(Api.functions.messages.forwardMessages(flags: flags, fromPeer: sourceInputPeer, id: [sourceInfo.messageId.id], randomId: [uniqueId], toPeer: inputPeer, topMsgId: topMsgId, replyTo: nil, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, videoTimestamp: videoTimestamp, allowPaidStars: allowPaidStars, suggestedPost: nil), tag: dependencyTag, automaticFloodWait: automaticFloodWait)
                         |> map(NetworkRequestResult.result)
                     } else {
                         sendMessageRequest = .fail(MTRpcError(errorCode: 400, errorDescription: "internal"))
@@ -594,7 +611,7 @@ private func sendUploadedMessageContent(
                         }
                     }
 
-                    sendMessageRequest = network.request(Api.functions.messages.sendInlineBotResult(flags: flags, peer: inputPeer, replyTo: replyTo, randomId: uniqueId, queryId: chatContextResult.queryId, id: chatContextResult.id, scheduleDate: scheduleTime, sendAs: sendAsInputPeer, quickReplyShortcut: nil, allowPaidStars: allowPaidStars))
+                    sendMessageRequest = network.request(Api.functions.messages.sendInlineBotResult(flags: flags, peer: inputPeer, replyTo: replyTo, randomId: uniqueId, queryId: chatContextResult.queryId, id: chatContextResult.id, scheduleDate: scheduleTime, sendAs: sendAsInputPeer, quickReplyShortcut: nil, allowPaidStars: allowPaidStars), automaticFloodWait: automaticFloodWait)
                     |> map(NetworkRequestResult.result)
                 case .messageScreenshot:
                     let replyTo: Api.InputReplyTo
@@ -615,7 +632,7 @@ private func sendUploadedMessageContent(
                         replyTo = .inputReplyToMessage(.init(flags: replyFlags, replyToMsgId: 0, topMsgId: nil, replyToPeerId: nil, quoteText: nil, quoteEntities: nil, quoteOffset: nil, monoforumPeerId: nil, todoItemId: nil, pollOption: nil, quoteRich: nil))
                     }
                 
-                    sendMessageRequest = network.request(Api.functions.messages.sendScreenshotNotification(peer: inputPeer, replyTo: replyTo, randomId: uniqueId))
+                    sendMessageRequest = network.request(Api.functions.messages.sendScreenshotNotification(peer: inputPeer, replyTo: replyTo, randomId: uniqueId), automaticFloodWait: automaticFloodWait)
                     |> map(NetworkRequestResult.result)
                 case .secretMedia:
                     assertionFailure()
@@ -651,6 +668,15 @@ private func sendUploadedMessageContent(
 }
 
 public func standaloneSendMessage(account: Account, peerId: PeerId, text: String, attributes: [MessageAttribute], media: StandaloneMedia?, replyToMessageId: MessageId?, threadId: Int32? = nil) -> Signal<Float, StandaloneSendMessageError> {
+    if SideloadPrivacy.scheduleOutgoingMessages && peerId.namespace == Namespaces.Peer.SecretChat {
+        return .fail(.generic)
+    }
+    let mediaBytes: Int64?
+    switch media {
+    case let .image(data)?: mediaBytes = Int64(data.count)
+    case let .file(data, _, _)?: mediaBytes = Int64(data.count)
+    case nil: mediaBytes = nil
+    }
     let content: Signal<StandaloneSendMessageEvent, StandaloneSendMessageError>
     if let media = media {
         switch media {
@@ -689,15 +715,18 @@ public func standaloneSendMessage(account: Account, peerId: PeerId, text: String
                 case let .result(result):
                     // The server's refusal (a blocked user, a restriction, a fee, flood) fails
                     // the send, so the caller never reports as sent what was not.
-                    let sendContent = sendMessageContent(account: account, peerId: peerId, attributes: attributes, content: result, threadId: threadId) |> map({ _ -> Float in return 1.0 })
+                    let sendContent = sendMessageContent(account: account, peerId: peerId, attributes: attributes, content: result, threadId: threadId, mediaBytes: mediaBytes) |> map({ _ -> Float in return 1.0 })
                     return .single(1.0) |> then(sendContent)
                 
             }
         }
 }
 
-private func sendMessageContent(account: Account, peerId: PeerId, attributes: [MessageAttribute], content: StandaloneMessageContent, threadId: Int32?) -> Signal<Void, StandaloneSendMessageError> {
+private func sendMessageContent(account: Account, peerId: PeerId, attributes: [MessageAttribute], content: StandaloneMessageContent, threadId: Int32?, mediaBytes: Int64?) -> Signal<Void, StandaloneSendMessageError> {
     return account.postbox.transaction { transaction -> Signal<Void, StandaloneSendMessageError> in
+        let schedule = personalForkStandaloneSchedule(attributes: attributes, mediaBytes: mediaBytes, now: account.network.getApproximateRemoteTimestamp())
+        let attributes = attributes.filter { !($0 is OutgoingScheduleInfoMessageAttribute) } + (schedule.map { [$0 as MessageAttribute] } ?? [])
+        let automaticFloodWait = schedule?.isPersonalForkAutomatic != true
         if peerId.namespace == Namespaces.Peer.SecretChat {
             // Secret chats cannot be written to from here.
             return .fail(.generic)
@@ -784,7 +813,7 @@ private func sendMessageContent(account: Account, peerId: PeerId, attributes: [M
                         replyTo = .inputReplyToMessage(.init(flags: flags, replyToMsgId: threadId, topMsgId: threadId, replyToPeerId: nil, quoteText: nil, quoteEntities: nil, quoteOffset: nil, monoforumPeerId: nil, todoItemId: nil, pollOption: nil, quoteRich: nil))
                     }
 
-                    sendMessageRequest = account.network.request(Api.functions.messages.sendMessage(flags: flags, peer: inputPeer, replyTo: replyTo, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, allowPaidStars: allowPaidStars, suggestedPost: nil, richMessage: apiRichMessage))
+                    sendMessageRequest = account.network.request(Api.functions.messages.sendMessage(flags: flags, peer: inputPeer, replyTo: replyTo, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, allowPaidStars: allowPaidStars, suggestedPost: nil, richMessage: apiRichMessage), automaticFloodWait: automaticFloodWait)
                     |> mapError { _ -> StandaloneSendMessageError in
                         return .generic
                     }
@@ -809,7 +838,7 @@ private func sendMessageContent(account: Account, peerId: PeerId, attributes: [M
                         flags |= 1 << 22
                     }
                 
-                    sendMessageRequest = account.network.request(Api.functions.messages.sendMedia(flags: flags, peer: inputPeer, replyTo: replyTo, media: inputMedia, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost))
+                    sendMessageRequest = account.network.request(Api.functions.messages.sendMedia(flags: flags, peer: inputPeer, replyTo: replyTo, media: inputMedia, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: nil, effect: nil, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost), automaticFloodWait: automaticFloodWait)
                     |> mapError { _ -> StandaloneSendMessageError in
                         return .generic
                     }

@@ -4,8 +4,10 @@ import TelegramCore
 import TelegramUIPreferences
 import AccountContext
 
-public let maximumNumberOfAccounts = 3
-public let maximumPremiumNumberOfAccounts = 4
+// xxxgram does not impose a local account count cap. Authentication and rate
+// limits are still enforced by Telegram independently for every account.
+public let maximumNumberOfAccounts = Int.max
+public let maximumPremiumNumberOfAccounts = Int.max
 
 public func activeAccountsAndPeers(context: AccountContext, includePrimary: Bool = false) -> Signal<((AccountContext, EnginePeer)?, [(AccountContext, EnginePeer, Int32)]), NoError> {
     let sharedContext = context.sharedContext

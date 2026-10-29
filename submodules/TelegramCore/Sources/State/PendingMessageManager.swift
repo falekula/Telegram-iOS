@@ -1199,8 +1199,18 @@ public final class PendingMessageManager {
             }
             
             messages.sort { $0.0.index < $1.0.index }
+
+            let remoteNow = network.getApproximateRemoteTimestamp()
+            let batchDelay = messages.flatMap { $0.0.media }.compactMap { $0 as? TelegramMediaFile }.map { SideloadPrivacy.outgoingScheduleDelay(mediaBytes: $0.size) }.max() ?? 12
+            messages = messages.map { (refreshPersonalForkSchedule(transaction: transaction, message: $0.0, now: remoteNow, minimumDelay: batchDelay), $0.1) }
+            // Retrying a serialized ghost schedule after FLOOD_WAIT could make
+            // its date expire and turn it into an immediate send on the server.
+            let automaticFloodWait = !messages.contains { $0.0.attributes.contains { ($0 as? OutgoingScheduleInfoMessageAttribute)?.isPersonalForkAutomatic == true } }
             
             if peerId.namespace == Namespaces.Peer.SecretChat {
+                if SideloadPrivacy.scheduleOutgoingMessages {
+                    return failMessages(postbox: postbox, ids: messages.map { $0.0.id })
+                }
                 for (message, content) in messages {
                     PendingMessageManager.sendSecretMessageContent(transaction: transaction, message: message, content: content)
                 }
@@ -1375,7 +1385,7 @@ public final class PendingMessageManager {
                     } else if let inputSourcePeerId = forwardPeerIds.first, let inputSourcePeer = transaction.getPeer(inputSourcePeerId).flatMap(apiInputPeer) {
                         let dependencyTag = PendingMessageRequestDependencyTag(messageId: messages[0].0.id)
 
-                        sendMessageRequest = network.request(Api.functions.messages.forwardMessages(flags: flags, fromPeer: inputSourcePeer, id: forwardIds.map { $0.0.id }, randomId: forwardIds.map { $0.1 }, toPeer: inputPeer, topMsgId: topMsgId, replyTo: replyTo, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: nil, videoTimestamp: videoTimestamp, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost), tag: dependencyTag)
+                        sendMessageRequest = network.request(Api.functions.messages.forwardMessages(flags: flags, fromPeer: inputSourcePeer, id: forwardIds.map { $0.0.id }, randomId: forwardIds.map { $0.1 }, toPeer: inputPeer, topMsgId: topMsgId, replyTo: replyTo, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: nil, videoTimestamp: videoTimestamp, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost), tag: dependencyTag, automaticFloodWait: automaticFloodWait)
                     } else {
                         assertionFailure()
                         sendMessageRequest = .fail(MTRpcError(errorCode: 400, errorDescription: "Invalid forward source"))
@@ -1504,7 +1514,7 @@ public final class PendingMessageManager {
                         flags |= 1 << 21
                     }
                     
-                    sendMessageRequest = network.request(Api.functions.messages.sendMultiMedia(flags: flags, peer: inputPeer, replyTo: replyTo, multiMedia: singleMedias, scheduleDate: scheduleTime, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: messageEffectId, allowPaidStars: allowPaidStars))
+                    sendMessageRequest = network.request(Api.functions.messages.sendMultiMedia(flags: flags, peer: inputPeer, replyTo: replyTo, multiMedia: singleMedias, scheduleDate: scheduleTime, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: messageEffectId, allowPaidStars: allowPaidStars), automaticFloodWait: automaticFloodWait)
                 }
                 
                 return sendMessageRequest
@@ -1702,8 +1712,13 @@ public final class PendingMessageManager {
             guard let message = transaction.getMessage(messageId) else {
                 return .complete()
             }
+            let message = refreshPersonalForkSchedule(transaction: transaction, message: message, now: network.getApproximateRemoteTimestamp())
+            let automaticFloodWait = !message.attributes.contains { ($0 as? OutgoingScheduleInfoMessageAttribute)?.isPersonalForkAutomatic == true }
             
             if messageId.peerId.namespace == Namespaces.Peer.SecretChat {
+                if SideloadPrivacy.scheduleOutgoingMessages {
+                    return failMessages(postbox: postbox, ids: [messageId])
+                }
                 PendingMessageManager.sendSecretMessageContent(transaction: transaction, message: message, content: content)
                 return .complete()
             } else if let peer = transaction.getPeer(messageId.peerId), let inputPeer = apiInputPeer(peer) {
@@ -1901,7 +1916,7 @@ public final class PendingMessageManager {
                             flags |= 1 << 22
                         }
                     
-                        sendMessageRequest = network.requestWithAdditionalInfo(Api.functions.messages.sendMessage(flags: flags, peer: inputPeer, replyTo: replyTo, message: message.text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: messageEffectId, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost, richMessage: apiRichMessage), info: .acknowledgement, tag: dependencyTag)
+                        sendMessageRequest = network.requestWithAdditionalInfo(Api.functions.messages.sendMessage(flags: flags, peer: inputPeer, replyTo: replyTo, message: message.text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: messageEffectId, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost, richMessage: apiRichMessage), info: .acknowledgement, tag: dependencyTag, automaticFloodWait: automaticFloodWait)
                     case let .media(inputMedia, text):
                         if bubbleUpEmojiOrStickersets {
                             flags |= Int32(1 << 15)
@@ -1978,7 +1993,7 @@ public final class PendingMessageManager {
                             flags |= 1 << 22
                         }
                     
-                        sendMessageRequest = network.request(Api.functions.messages.sendMedia(flags: flags, peer: inputPeer, replyTo: replyTo, media: inputMedia, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: messageEffectId, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost), tag: dependencyTag)
+                        sendMessageRequest = network.request(Api.functions.messages.sendMedia(flags: flags, peer: inputPeer, replyTo: replyTo, media: inputMedia, message: text, randomId: uniqueId, replyMarkup: nil, entities: messageEntities, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: messageEffectId, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost), tag: dependencyTag, automaticFloodWait: automaticFloodWait)
                         |> map(NetworkRequestResult.result)
                     case let .forward(sourceInfo):
                         var topMsgId: Int32?
@@ -2027,7 +2042,7 @@ public final class PendingMessageManager {
                         }
                     
                         if let forwardSourceInfoAttribute = forwardSourceInfoAttribute, let sourcePeer = transaction.getPeer(forwardSourceInfoAttribute.messageId.peerId), let sourceInputPeer = apiInputPeer(sourcePeer) {
-                            sendMessageRequest = network.request(Api.functions.messages.forwardMessages(flags: flags, fromPeer: sourceInputPeer, id: [sourceInfo.messageId.id], randomId: [uniqueId], toPeer: inputPeer, topMsgId: topMsgId, replyTo: replyTo, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: nil, videoTimestamp: videoTimestamp, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost), tag: dependencyTag)
+                            sendMessageRequest = network.request(Api.functions.messages.forwardMessages(flags: flags, fromPeer: sourceInputPeer, id: [sourceInfo.messageId.id], randomId: [uniqueId], toPeer: inputPeer, topMsgId: topMsgId, replyTo: replyTo, scheduleDate: scheduleTime, scheduleRepeatPeriod: scheduleRepeatPeriod, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, effect: nil, videoTimestamp: videoTimestamp, allowPaidStars: allowPaidStars, suggestedPost: suggestedPost), tag: dependencyTag, automaticFloodWait: automaticFloodWait)
                             |> map(NetworkRequestResult.result)
                         } else {
                             sendMessageRequest = .fail(MTRpcError(errorCode: 400, errorDescription: "internal"))
@@ -2090,7 +2105,7 @@ public final class PendingMessageManager {
                             flags |= 1 << 21
                         }
                     
-                        sendMessageRequest = network.request(Api.functions.messages.sendInlineBotResult(flags: flags, peer: inputPeer, replyTo: replyTo, randomId: uniqueId, queryId: chatContextResult.queryId, id: chatContextResult.id, scheduleDate: scheduleTime, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, allowPaidStars: allowPaidStars))
+                        sendMessageRequest = network.request(Api.functions.messages.sendInlineBotResult(flags: flags, peer: inputPeer, replyTo: replyTo, randomId: uniqueId, queryId: chatContextResult.queryId, id: chatContextResult.id, scheduleDate: scheduleTime, sendAs: sendAsInputPeer, quickReplyShortcut: quickReplyShortcut, allowPaidStars: allowPaidStars), automaticFloodWait: automaticFloodWait)
                         |> map(NetworkRequestResult.result)
                     case .messageScreenshot:
                         let replyTo: Api.InputReplyTo

@@ -789,6 +789,11 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                 }
                 
                 let transcribedText = forcedAudioTranscriptionText ?? transcribedText(message: EngineMessage(arguments.message))
+                // Asking Telegram to transcribe incoming audio marks it listened on the server.
+                // Existing transcripts remain readable without issuing a new transcription request.
+                if arguments.incoming && transcribedText == nil {
+                    displayTranscribe = false
+                }
                 
                 switch audioTranscriptionState {
                 case .inProgress:

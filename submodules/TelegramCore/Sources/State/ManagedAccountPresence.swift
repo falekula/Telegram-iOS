@@ -6,6 +6,8 @@ import MtProtoKit
 
 private typealias SignalKitTimer = SwiftSignalKit.Timer
 
+private struct PersonalForkPublicPresenceMigration: Codable {}
+private let personalForkPublicPresenceKey = ValueBoxKey("xxxgram.public-presence-migration.v1")
 
 private final class AccountPresenceManagerImpl {
     private let queue: Queue
@@ -19,14 +21,23 @@ private final class AccountPresenceManagerImpl {
     
     private var wasOnline: Bool = false
     
-    init(queue: Queue, shouldKeepOnlinePresence: Signal<Bool, NoError>, network: Network) {
+    init(queue: Queue, shouldKeepOnlinePresence: Signal<Bool, NoError>, network: Network, postbox: Postbox) {
         self.queue = queue
         self.network = network
-        // Apply this for every authenticated account, not just the settings screen.
-        self.privacySettingsDisposable.set((network.request(Api.functions.account.setPrivacy(
-            key: .inputPrivacyKeyStatusTimestamp,
-            rules: [.inputPrivacyValueDisallowAll]
-        )) |> retryRequest).start())
+        // The owner explicitly requested public last-seen instead of the prior
+        // build's Nobody setting. Migrate once, only marking success after the
+        // server accepts it; later manual changes remain untouched.
+        self.privacySettingsDisposable.set((postbox.transaction { transaction in
+            return transaction.getPreferencesEntry(key: personalForkPublicPresenceKey) == nil
+        } |> mapToSignal { needsMigration -> Signal<Void, NoError> in
+            guard needsMigration else { return .complete() }
+            return (network.request(Api.functions.account.setPrivacy(key: .inputPrivacyKeyStatusTimestamp, rules: [.inputPrivacyValueAllowAll])) |> retryRequest)
+            |> mapToSignal { _ in
+                return postbox.transaction { transaction in
+                    transaction.setPreferencesEntry(key: personalForkPublicPresenceKey, value: PreferencesEntry(PersonalForkPublicPresenceMigration()))
+                }
+            }
+        }).start())
         
         self.shouldKeepOnlinePresenceDisposable = (shouldKeepOnlinePresence
         |> distinctUntilChanged
@@ -50,6 +61,14 @@ private final class AccountPresenceManagerImpl {
     }
     
     private func updatePresence(_ isOnline: Bool) {
+        if SideloadPrivacy.hideOnline {
+            // Do not continually send offline either: it can move the server's
+            // last-seen date. The network layer also blocks alternative callers.
+            self.onlineTimer?.invalidate()
+            self.onlineTimer = nil
+            self.isPerformingUpdate.set(false)
+            return
+        }
         let request: Signal<Api.Bool, MTRpcError>
         if isOnline {
             let timer = SignalKitTimer(timeout: 30.0, repeat: false, completion: { [weak self] in
@@ -60,7 +79,7 @@ private final class AccountPresenceManagerImpl {
             }, queue: self.queue)
             self.onlineTimer = timer
             timer.start()
-            request = self.network.request(Api.functions.account.updateStatus(offline: .boolTrue))
+            request = self.network.request(Api.functions.account.updateStatus(offline: .boolFalse))
         } else {
             self.onlineTimer?.invalidate()
             self.onlineTimer = nil
@@ -84,10 +103,10 @@ final class AccountPresenceManager {
     private let queue = Queue()
     private let impl: QueueLocalObject<AccountPresenceManagerImpl>
     
-    init(shouldKeepOnlinePresence: Signal<Bool, NoError>, network: Network) {
+    init(shouldKeepOnlinePresence: Signal<Bool, NoError>, network: Network, postbox: Postbox) {
         let queue = self.queue
         self.impl = QueueLocalObject(queue: self.queue, generate: {
-            return AccountPresenceManagerImpl(queue: queue, shouldKeepOnlinePresence: shouldKeepOnlinePresence, network: network)
+            return AccountPresenceManagerImpl(queue: queue, shouldKeepOnlinePresence: shouldKeepOnlinePresence, network: network, postbox: postbox)
         })
     }
     

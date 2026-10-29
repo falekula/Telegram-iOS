@@ -17,6 +17,11 @@ private enum InternalAudioTranscriptionResult {
 
 func _internal_transcribeAudio(postbox: Postbox, network: Network, messageId: MessageId) -> Signal<EngineAudioTranscriptionResult, NoError> {
     return postbox.transaction { transaction -> Api.InputPeer? in
+        // Telegram's server marks incoming voice messages consumed during
+        // transcription. A normal read-RPC filter cannot undo that side effect.
+        if SideloadPrivacy.hideReadReceipts, let message = transaction.getMessage(messageId), message.flags.contains(.Incoming) {
+            return nil
+        }
         return transaction.getPeer(messageId.peerId).flatMap(apiInputPeer)
     }
     |> mapToSignal { inputPeer -> Signal<EngineAudioTranscriptionResult, NoError> in
