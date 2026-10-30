@@ -2421,7 +2421,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             }
 
             var shouldAnimateMessageTransition = strongSelf.chatDisplayNode.shouldAnimateMessageTransition
-            if let _ = sourceView?.asyncdisplaykit_node as? ChatEmptyNodeStickerContentNode {
+            if !strongSelf.chatDisplayNode.personalForkUsesScheduledSendUI, let _ = sourceView?.asyncdisplaykit_node as? ChatEmptyNodeStickerContentNode {
                 shouldAnimateMessageTransition = true
             }
             
@@ -9184,6 +9184,28 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
     func shouldDivertMessagesToScheduled(targetPeer: EnginePeer? = nil, messages: [EnqueueMessage]) -> Signal<Bool, NoError> {
         return .single(false)
     }
+
+    func takePersonalForkSendAction() -> (() -> Void)? {
+        guard self.chatDisplayNode.personalForkUsesScheduledSendUI else {
+            return nil
+        }
+        let action = self.layoutActionOnViewTransitionAction
+        self.layoutActionOnViewTransitionAction = nil
+        return action
+    }
+
+    func finishPersonalForkSend(accepted: Bool, action: (() -> Void)?) {
+        guard self.chatDisplayNode.personalForkUsesScheduledSendUI else {
+            return
+        }
+        self.chatDisplayNode.personalForkSendInProgress = false
+        if accepted {
+            action?()
+        } else {
+            // Keep the input and attachment picker intact when nothing was saved.
+            self.present(textAlertController(context: self.context, title: "Не удалось добавить в очередь", text: "Сообщение не отправлено. Текст и вложения сохранены — попробуйте ещё раз.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+        }
+    }
     
     func sendMessages(_ messages: [EnqueueMessage], media: Bool = false, postpone: Bool = false, commit: Bool = false) {
         if case let .customChatContents(customChatContents) = self.subject {
@@ -9224,8 +9246,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             if commit || !isScheduledMessages {
                 self.commitPurposefulAction()
                 
+                let acceptedAction = self.takePersonalForkSendAction()
                 let _ = (enqueueMessages(account: self.context.account, peerId: peerId, messages: self.transformEnqueueMessages(messages, postpone: postpone))
-                |> deliverOnMainQueue).startStandalone(next: { [weak self] _ in
+                |> deliverOnMainQueue).startStandalone(next: { [weak self] messageIds in
+                    self?.finishPersonalForkSend(accepted: messageIds.contains(where: { $0 != nil }), action: acceptedAction)
                     if let strongSelf = self, strongSelf.presentationInterfaceState.subject != .scheduledMessages {
                         strongSelf.chatDisplayNode.historyNode.scrollToEndOfHistory()
                     }
@@ -9265,9 +9289,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         getAnimatedTransitionSource: ((String) -> UIView?)? = nil,
         completion: @escaping () -> Void = {}
     ) {
+        guard !self.chatDisplayNode.personalForkSendInProgress else {
+            return
+        }
         if let _ = self.presentationInterfaceState.sendPaidMessageStars {
             self.presentPaidMessageAlertIfNeeded(count: Int32(signals?.count ?? 1), forceDark: fromGallery, completion: { [weak self] postpone in
-                self?.commitEnqueueMediaMessages(signals: signals, silentPosting: silentPosting, scheduleTime: scheduleTime, postpone: postpone, parameters: parameters, getAnimatedTransitionSource: getAnimatedTransitionSource, completion: completion)
+                self?.commitEnqueueMediaMessages(signals: signals, originalMediaReference: originalMediaReference, silentPosting: silentPosting, scheduleTime: scheduleTime, postpone: postpone, replyToSubject: replyToSubject, parameters: parameters, getAnimatedTransitionSource: getAnimatedTransitionSource, completion: completion)
             })
         } else {
             self.commitEnqueueMediaMessages(signals: signals, originalMediaReference: originalMediaReference, silentPosting: silentPosting, scheduleTime: scheduleTime, replyToSubject: replyToSubject, parameters: parameters, getAnimatedTransitionSource: getAnimatedTransitionSource, completion: completion)
@@ -9285,16 +9312,35 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         getAnimatedTransitionSource: ((String) -> UIView?)? = nil,
         completion: @escaping () -> Void = {}
     ) {
+        guard let signals, !signals.isEmpty else {
+            return
+        }
+        if self.chatDisplayNode.personalForkUsesScheduledSendUI {
+            guard !self.chatDisplayNode.personalForkSendInProgress else {
+                return
+            }
+            self.chatDisplayNode.personalForkSendInProgress = true
+        }
         var animateTransition = true
+        if self.chatDisplayNode.personalForkUsesScheduledSendUI {
+            animateTransition = false
+        }
         if let validLayout = self.chatDisplayNode.validLayout?.0 {
             if validLayout.metrics.widthClass != .compact {
                 animateTransition = false
             }
         }
         
-        self.enqueueMediaMessageDisposable.set((legacyAssetPickerEnqueueMessages(context: self.context, account: self.context.account, signals: signals!, originalMediaReference: originalMediaReference)
+        var receivedMediaItems = false
+        self.enqueueMediaMessageDisposable.set((legacyAssetPickerEnqueueMessages(context: self.context, account: self.context.account, signals: signals, originalMediaReference: originalMediaReference)
+        |> take(1)
         |> deliverOnMainQueue).startStrict(next: { [weak self] items in
+            receivedMediaItems = true
             guard let strongSelf = self else {
+                return
+            }
+            if items.isEmpty {
+                strongSelf.finishPersonalForkSend(accepted: false, action: nil)
                 return
             }
             
@@ -9510,10 +9556,16 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                     doSend(nil)
                 }
                 
-                if let _ = scheduleTime {
+                if scheduleTime != nil && !strongSelf.chatDisplayNode.personalForkUsesScheduledSendUI {
                     completion()
                 }
             })
+        }, error: { [weak self] _ in
+            self?.finishPersonalForkSend(accepted: false, action: nil)
+        }, completed: { [weak self] in
+            if !receivedMediaItems {
+                self?.chatDisplayNode.personalForkSendInProgress = false
+            }
         }))
     }
 
@@ -9564,6 +9616,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                         })
                     }
                 }, nil)
+                if self.chatDisplayNode.personalForkUsesScheduledSendUI {
+                    self.finishPersonalForkSend(accepted: true, action: self.takePersonalForkSendAction())
+                }
             }
         }
         

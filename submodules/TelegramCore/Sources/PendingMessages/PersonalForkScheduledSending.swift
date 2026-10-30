@@ -1,6 +1,11 @@
 import Foundation
 import Postbox
 
+/// UI completion must match the queue policy without exposing network filters.
+public var personalForkSchedulesOutgoingMessages: Bool {
+    return SideloadPrivacy.scheduleOutgoingMessages
+}
+
 func personalForkScheduleMessages(_ messages: [(Bool, EnqueueMessage)], peerId: PeerId, now: Int32) -> [(Bool, EnqueueMessage)] {
     guard SideloadPrivacy.scheduleOutgoingMessages, peerId.namespace != Namespaces.Peer.SecretChat else { return messages }
     let delay = messages.map { _, message -> Int32 in

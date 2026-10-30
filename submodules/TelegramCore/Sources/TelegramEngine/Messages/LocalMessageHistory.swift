@@ -3,6 +3,7 @@ import Postbox
 import SwiftSignalKit
 
 private let localMessageHistoryKey = ValueBoxKey("falekula.local-message-history.v1")
+private let localMessageHistoryLimitsKey = ValueBoxKey("xxxgram.local-message-history-limits.v1")
 
 func recordLocalMessageHistory(transaction: Transaction, message: Message, deleted: Bool, updatedText: String? = nil) {
     guard personalForkIsPersonalPeer(message.id.peerId, peer: transaction.getPeer(message.id.peerId)) else { return }
@@ -26,7 +27,7 @@ func recordLocalMessageHistory(transaction: Transaction, message: Message, delet
         text: message.text,
         updatedText: updatedText,
         hadMedia: !message.media.isEmpty
-    ))
+    ), limits: transaction.getPreferencesEntry(key: localMessageHistoryLimitsKey)?.get(LocalMessageHistoryLimits.self) ?? .defaultSettings)
     transaction.setPreferencesEntry(key: localMessageHistoryKey, value: PreferencesEntry(state))
 }
 
@@ -40,6 +41,25 @@ func migrateLocalMessageHistoryToPersonalChats(transaction: Transaction) {
 }
 
 extension TelegramEngine.Messages {
+    public func localMessageHistoryLimits() -> Signal<LocalMessageHistoryLimits, NoError> {
+        return self.account.postbox.preferencesView(keys: [localMessageHistoryLimitsKey])
+        |> map { preferences in
+            return preferences.values[localMessageHistoryLimitsKey]?.get(LocalMessageHistoryLimits.self) ?? .defaultSettings
+        }
+        |> distinctUntilChanged
+    }
+
+    public func updateLocalMessageHistoryLimits(_ limits: LocalMessageHistoryLimits) -> Signal<Void, NoError> {
+        return self.account.postbox.transaction { transaction in
+            transaction.setPreferencesEntry(key: localMessageHistoryLimitsKey, value: PreferencesEntry(limits))
+            if var state = transaction.getPreferencesEntry(key: localMessageHistoryKey)?.get(LocalMessageHistoryState.self) {
+                // Limits only trim the journal. Never delete ordinary or retained chat messages here.
+                state.trim(to: limits)
+                transaction.setPreferencesEntry(key: localMessageHistoryKey, value: PreferencesEntry(state))
+            }
+        }
+    }
+
     public func localMessageHistory() -> Signal<[LocalMessageHistoryEntry], NoError> {
         return self.account.postbox.preferencesView(keys: [localMessageHistoryKey])
         |> map { preferences in

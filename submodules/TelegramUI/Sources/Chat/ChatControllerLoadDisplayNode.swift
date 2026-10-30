@@ -905,6 +905,13 @@ extension ChatControllerImpl {
                 return
             }
             self.layoutActionOnViewTransitionAction = f
+
+            if self.chatDisplayNode.personalForkUsesScheduledSendUI {
+                // This history never receives the local scheduled message. Finish
+                // the composer/picker when enqueue succeeds instead of waiting
+                // twelve seconds (or forever) for an unrelated list transition.
+                return
+            }
             
             if !enableSendAnimationV2 {
                 self.chatDisplayNode.historyNode.pinToTopStableId = nil
@@ -1037,6 +1044,7 @@ extension ChatControllerImpl {
                     }
                     
                     if let errorText = errorText {
+                        strongSelf.chatDisplayNode.personalForkSendInProgress = false
                         let alertController = textAlertController(
                             context: strongSelf.context,
                             title: nil,
@@ -1063,6 +1071,7 @@ extension ChatControllerImpl {
                         if var last = forwardedMessages.last {
                             if let currentMessage = last.first, case let .forward(currentSource, _, _, _, _) = currentMessage, currentSource.peerId == source.peerId {
                                 last.append(message)
+                                forwardedMessages[forwardedMessages.count - 1] = last
                                 added = true
                             }
                         }
@@ -1121,11 +1130,13 @@ extension ChatControllerImpl {
                         signal = enqueueMessages(account: strongSelf.context.account, peerId: peerId, messages: transformedMessages)
                     }
                     
+                    let acceptedAction = strongSelf.takePersonalForkSendAction()
                     let _ = (signal
                     |> deliverOnMainQueue).startStandalone(next: { messageIds in
                         guard let strongSelf = self else {
                             return
                         }
+                        strongSelf.finishPersonalForkSend(accepted: messageIds.contains(where: { $0 != nil }), action: acceptedAction)
                         if case .scheduledMessages = strongSelf.presentationInterfaceState.subject {
                         } else {
                             strongSelf.chatDisplayNode.historyNode.scrollToEndOfHistory()

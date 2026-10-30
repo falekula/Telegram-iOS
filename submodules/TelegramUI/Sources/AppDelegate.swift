@@ -2183,11 +2183,17 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
     
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Logger.shared.log("App \(self.episodeId)", "register for notifications: didRegisterForRemoteNotificationsWithDeviceToken (deviceToken: \(hexString(deviceToken)))")
+        UserDefaults.standard.removeObject(forKey: "xxxgram.push-registration-failure")
+        NotificationCenter.default.post(name: Notification.Name("xxxgram.push-registration-status"), object: nil)
         self.notificationTokenPromise.set(.single(deviceToken))
     }
     
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         Logger.shared.log("App \(self.episodeId)", "register for notifications: didFailToRegisterForRemoteNotificationsWithError (error: \(error))")
+        // Keep only a category, never the APNs token or the full system error.
+        let missingEntitlement = (error as NSError).localizedDescription.contains("aps-environment")
+        UserDefaults.standard.set(missingEntitlement ? "missing-entitlement" : "registration-failed", forKey: "xxxgram.push-registration-failure")
+        NotificationCenter.default.post(name: Notification.Name("xxxgram.push-registration-status"), object: nil)
     }
     
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
@@ -3229,12 +3235,15 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
     @available(iOS 10.0, *)
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         let _ = (accountIdFromNotification(notification, sharedContext: self.sharedContextPromise.get())
+        |> take(1)
         |> deliverOnMainQueue).start(next: { accountId in
+            var options: UNNotificationPresentationOptions = []
             if let context = self.contextValue {
                 if let accountId = accountId, context.context.account.id != accountId || notification.request.content.userInfo["url"] != nil {
-                    completionHandler([.banner, .list])
+                    options = [.banner, .list]
                 }
             }
+            completionHandler(options)
         })
     }
     

@@ -54,6 +54,7 @@ jobs:
           mkdir -p build/artifacts
           python3 -u build-system/Make/Make.py \
             build \
+            --continueOnError \
             --configurationPath=build/private-sideload-configuration.json \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \

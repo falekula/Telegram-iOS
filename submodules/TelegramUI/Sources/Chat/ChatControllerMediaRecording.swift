@@ -687,6 +687,9 @@ extension ChatControllerImpl {
         messageEffect: ChatSendMessageEffect? = nil,
         postpone: Bool = false
     ) {
+        guard !self.chatDisplayNode.personalForkSendInProgress else {
+            return
+        }
         self.chatDisplayNode.updateRecordedMediaDeleted(false)
         
         guard let recordedMediaPreview = self.presentationInterfaceState.interfaceState.mediaDraftState else {
@@ -754,8 +757,13 @@ extension ChatControllerImpl {
                 return
             }
             
+            let acceptedAction = self.takePersonalForkSendAction()
+            if self.chatDisplayNode.personalForkUsesScheduledSendUI {
+                self.chatDisplayNode.personalForkSendInProgress = true
+            }
             let _ = (enqueueMessages(account: self.context.account, peerId: peerId, messages: transformedMessages)
-            |> deliverOnMainQueue).startStandalone(next: { [weak self] _ in
+            |> deliverOnMainQueue).startStandalone(next: { [weak self] messageIds in
+                self?.finishPersonalForkSend(accepted: messageIds.contains(where: { $0 != nil }), action: acceptedAction)
                 if let strongSelf = self, strongSelf.presentationInterfaceState.subject != .scheduledMessages {
                     strongSelf.chatDisplayNode.historyNode.scrollToEndOfHistory()
                 }

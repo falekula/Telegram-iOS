@@ -73,6 +73,40 @@ final class PersonalForkTests: XCTestCase {
         XCTAssertEqual(updated.compactMap { $0 as? LocalMessageStateAttribute }.first?.deleted, false)
     }
 
+    func testRetainedPlaybackClearsLocalUnplayedStateWithoutRestoringCountdown() {
+        let retained = LocalMessageStateAttribute(retainedMedia: true, originalMediaTimeout: viewOnceTimeout)
+        // Playback updates and server refreshes pass through this storage hook.
+        // They must keep the local played state and discard incoming timers.
+        var updated: [MessageAttribute] = [
+            ConsumableContentMessageAttribute(consumed: true),
+            AutoclearTimeoutMessageAttribute(timeout: viewOnceTimeout, countdownBeginTime: 100),
+            AutoremoveTimeoutMessageAttribute(timeout: 5, countdownBeginTime: 100)
+        ]
+        telegramPostboxSeedConfiguration.mergeMessageAttributes([retained, ConsumableContentMessageAttribute(consumed: false)], &updated)
+        XCTAssertEqual(updated.compactMap { $0 as? ConsumableContentMessageAttribute }.first?.consumed, true)
+        XCTAssertEqual(updated.compactMap { $0 as? LocalMessageStateAttribute }.first?.originalMediaTimeout, viewOnceTimeout)
+        XCTAssertFalse(updated.contains { $0 is AutoclearTimeoutMessageAttribute || $0 is AutoremoveTimeoutMessageAttribute })
+
+        // An ordinary attachment retains its normal server timer.
+        var ordinary: [MessageAttribute] = [AutoclearTimeoutMessageAttribute(timeout: 5, countdownBeginTime: nil)]
+        telegramPostboxSeedConfiguration.mergeMessageAttributes([], &ordinary)
+        XCTAssertTrue(ordinary.first is AutoclearTimeoutMessageAttribute)
+    }
+
+    func testHiddenPlaybackReceiptDoesNotResetLocalPlayedIndicatorOnRefresh() {
+        var refreshed: [MessageAttribute] = [ConsumableContentMessageAttribute(consumed: false)]
+        telegramPostboxSeedConfiguration.mergeMessageAttributes([ConsumableContentMessageAttribute(consumed: true)], &refreshed)
+        XCTAssertEqual(refreshed.compactMap { $0 as? ConsumableContentMessageAttribute }.first?.consumed, true)
+
+        var untouched: [MessageAttribute] = [ConsumableContentMessageAttribute(consumed: false)]
+        telegramPostboxSeedConfiguration.mergeMessageAttributes([ConsumableContentMessageAttribute(consumed: false)], &untouched)
+        XCTAssertEqual(untouched.compactMap { $0 as? ConsumableContentMessageAttribute }.first?.consumed, false)
+
+        var replacedWithText: [MessageAttribute] = []
+        telegramPostboxSeedConfiguration.mergeMessageAttributes([ConsumableContentMessageAttribute(consumed: true)], &replacedWithText)
+        XCTAssertFalse(replacedWithText.contains { $0 is ConsumableContentMessageAttribute })
+    }
+
     func testPersonalHistoryExcludesBothKindsOfGroup() {
         for namespace in [Namespaces.Peer.CloudGroup, Namespaces.Peer.CloudChannel] {
             let id = MessageId(peerId: PeerId(namespace: namespace, id: PeerId.Id._internalFromInt64Value(42)), namespace: Namespaces.Message.Cloud, id: 1)

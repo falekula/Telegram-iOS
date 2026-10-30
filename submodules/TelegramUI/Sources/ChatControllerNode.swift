@@ -275,6 +275,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     private let titleAccessoryPanelContainer: ChatControllerTitlePanelNodeContainer
     private var currentTitleAccessoryPanelNode: ChatTitleAccessoryPanelNode?
     private var currentManagingBotTitlePanelNode: ChatManagingBotTitlePanelNode?
+    private var personalForkSendQueuePanel: PersonalForkSendQueuePanelNode?
     
     private var floatingTopicsPanelContainer: ChatControllerTitlePanelNodeContainer
     private var floatingTopicsPanel: (view: ComponentView<ChatSidePanelEnvironment>, component: ChatFloatingTopicsPanel)?
@@ -350,6 +351,23 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     var updateTypingActivity: (Bool) -> Void = { _ in }
     var dismissUrlPreview: () -> Void = { }
     var setupSendActionOnViewUpdate: (@escaping () -> Void, Int64?) -> Void = { _, _ in }
+    // Only spans local enqueue, never the network upload or scheduled delay.
+    var personalForkSendInProgress = false {
+        didSet {
+            self.inputPanelNode?.isUserInteractionEnabled = !self.personalForkSendInProgress
+        }
+    }
+    var personalForkUsesScheduledSendUI: Bool {
+        guard personalForkSchedulesOutgoingMessages, let peerId = self.chatLocation.peerId, peerId.namespace != Namespaces.Peer.SecretChat else {
+            return false
+        }
+        switch self.chatPresentationInterfaceState.subject {
+        case .scheduledMessages, .customChatContents:
+            return false
+        default:
+            return true
+        }
+    }
     var requestLayout: (ContainedViewLayoutTransition) -> Void = { _ in }
     var dismissAsOverlay: () -> Void = { }
     
@@ -1180,6 +1198,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     private var isInFocus: Bool = false
     func inFocusUpdated(isInFocus: Bool) {
         self.isInFocus = isInFocus
+        self.personalForkSendQueuePanel?.setInFocus(isInFocus)
         
         if let inputNode = self.inputNode as? ChatEntityKeyboardInputNode {
             inputNode.simulateUpdateLayout(isVisible: isInFocus)
@@ -1632,6 +1651,34 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         var titleAccessoryPanelNode: ChatTitleAccessoryPanelNode?
         if !hideTopPanels {
             titleAccessoryPanelNode = titlePanelForChatPresentationInterfaceState(self.chatPresentationInterfaceState, context: self.context, currentPanel: self.currentTitleAccessoryPanelNode, controllerInteraction: self.controllerInteraction, interfaceInteraction: self.interfaceInteraction, force: false)
+        }
+
+        if self.personalForkUsesScheduledSendUI, let peerId = self.chatLocation.peerId {
+            let panel: PersonalForkSendQueuePanelNode
+            if let current = self.personalForkSendQueuePanel {
+                panel = current
+            } else {
+                panel = PersonalForkSendQueuePanelNode(context: self.context)
+                panel.visibilityChanged = { [weak self] in
+                    guard let self else { return }
+                    self.requestLayout(self.context.sharedContext.currentPresentationData.with({ $0 }).reduceMotion ? .immediate : .animated(duration: 0.2, curve: .easeInOut))
+                }
+                panel.openQueue = { [weak self] in
+                    self?.interfaceInteraction?.openScheduledMessages()
+                }
+                self.personalForkSendQueuePanel = panel
+            }
+            panel.setInFocus(self.isInFocus && !hideTopPanels)
+            panel.updateLocation(peerId: peerId, threadId: self.chatLocation.threadId)
+            if !hideTopPanels && panel.hasMessages {
+                headerPanels.append(HeaderPanelContainerComponent.Panel(
+                    key: "xxxgramSendQueue",
+                    orderIndex: 2,
+                    component: AnyComponent(LegacyChatHeaderPanelComponent(panelNode: panel, interfaceState: self.chatPresentationInterfaceState))
+                ))
+            }
+        } else {
+            self.personalForkSendQueuePanel = nil
         }
         
         // The container lays panels out in append order (`orderIndex` only takes part in `Panel ==`),
@@ -5051,6 +5098,9 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     }
 
     func sendCurrentMessage(silentPosting: Bool? = nil, scheduleTime: Int32? = nil, repeatPeriod: Int32? = nil, postpone: Bool = false, messageEffect: ChatSendMessageEffect? = nil, sendWithoutFormatting: Bool = false, completion: @escaping () -> Void = {}) {
+        guard !self.personalForkSendInProgress else {
+            return
+        }
         guard let textInputPanelNode = self.inputPanelNode as? ChatTextInputPanelNode else {
             return
         }
@@ -5479,6 +5529,9 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                     }, usedCorrelationId)
                     completion()
                     
+                    if self.personalForkUsesScheduledSendUI {
+                        self.personalForkSendInProgress = true
+                    }
                     self.sendMessages(messages, silentPosting, scheduleTime, repeatPeriod, messages.count > 1, postpone)
                 }
                 
@@ -5628,6 +5681,10 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     }
 
     var shouldAnimateMessageTransition: Bool {
+        // Scheduled messages have no bubble in this history to animate toward.
+        if self.personalForkUsesScheduledSendUI {
+            return false
+        }
         if (self.context.sharedContext.currentPresentationData.with({ $0 })).reduceMotion {
             return false
         }

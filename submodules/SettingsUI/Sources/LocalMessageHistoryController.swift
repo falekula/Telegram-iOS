@@ -8,9 +8,15 @@ import AccountContext
 import AlertUI
 import PresentationDataUtils
 
+private final class LocalHistoryArguments {
+    let loadMore: () -> Void
+    init(loadMore: @escaping () -> Void) { self.loadMore = loadMore }
+}
+
 private struct LocalHistoryListEntry: ItemListNodeEntry {
     let stableId: Int32
     let text: String
+    var loadMore: Bool = false
 
     var section: ItemListSectionId { return self.stableId }
 
@@ -19,11 +25,21 @@ private struct LocalHistoryListEntry: ItemListNodeEntry {
     }
 
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+        if self.loadMore {
+            let arguments = arguments as! LocalHistoryArguments
+            return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, title: self.text, label: "", sectionId: self.section, style: .blocks, disclosureStyle: .arrow, action: arguments.loadMore)
+        }
         return ItemListTextItem(presentationData: presentationData, text: .plain(self.text), sectionId: self.section)
     }
 }
 
 public func localMessageHistoryController(context: AccountContext, message: EngineMessage? = nil) -> ViewController {
+    let visibleCount = ValuePromise(200, ignoreRepeated: true)
+    var currentVisibleCount = 200
+    let arguments = LocalHistoryArguments(loadMore: {
+        currentVisibleCount += 200
+        visibleCount.set(currentVisibleCount)
+    })
     let records = Promise<[LocalMessageHistoryEntry]>()
     records.set(context.engine.messages.localMessageHistory() |> map { records in
         guard let message else { return records }
@@ -38,8 +54,8 @@ public func localMessageHistoryController(context: AccountContext, message: Engi
     let actions = DisposableSet()
     var presentImpl: ((ViewController) -> Void)?
 
-    let state = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, records.get(), currentMessage)
-    |> map { presentationData, records, message -> (ItemListControllerState, (ItemListNodeState, Any)) in
+    let state = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, records.get(), currentMessage, context.engine.messages.localMessageHistoryLimits(), visibleCount.get())
+    |> map { presentationData, records, message, limits, visibleCount -> (ItemListControllerState, (ItemListNodeState, Any)) in
         let clear = ItemListNavigationButton(content: .text("Очистить"), style: .regular, enabled: true, action: {
             presentImpl?(textAlertController(context: context, title: "Очистить историю?", text: "Вся локальная история будет очищена. Сохранённые копии удалённых сообщений и исчезающих фото пропадут из чатов. Обычные сообщения останутся.", actions: [
                 TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
@@ -50,14 +66,21 @@ public func localMessageHistoryController(context: AccountContext, message: Engi
             ]))
         })
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Личная история"), leftNavigationButton: nil, rightNavigationButton: clear, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
-        var entries = [LocalHistoryListEntry(stableId: 0, text: "Только личные переписки. Удалённые сообщения остаются в чате полупрозрачными с корзиной; у правок появляется карандаш. Зажмите сообщение — прошлый текст и его копирование доступны прямо в меню. До 30 версий на сообщение; журнал ниже — до 500 записей / 4 МБ. Очистка убирает локальные копии, а обычные сообщения на сервере сохраняет. Загруженные файлы можно отдельно очистить в Данные и память → Использование памяти.")]
+        let usedBytes = records.reduce(0) { $0 + $1.storageByteCount }
+        let usedMegabytes = String(format: "%.2f", Double(usedBytes) / (1024.0 * 1024.0))
+        var info = "В журнале: \(records.count) из \(limits.recordCount) записей · \(usedMegabytes) из \(limits.megabytes) МБ текста. При достижении любого лимита самые старые записи журнала заменяются новыми. Изменить: Настройки → xxxgram → Лимиты истории."
+        if records.count > visibleCount {
+            info += "\nПоказаны последние \(visibleCount) записей. Более ранние можно открыть кнопкой в конце списка."
+        }
+        info += "\n\nТолько личные переписки. Удалённые сообщения остаются в чате с корзиной; у правок появляется карандаш. До 30 версий на сообщение. Копии прямо в чатах не ограничены лимитом журнала. Очистка ниже убирает и журнал, и локальные копии; обычные сообщения остаются. Файлы можно отдельно очистить в Данные и память → Использование памяти."
+        var entries = [LocalHistoryListEntry(stableId: 0, text: info)]
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short
         if records.isEmpty {
             entries.append(LocalHistoryListEntry(stableId: 1, text: "История пуста. Новые правки и удаления появятся здесь после получения обновлений."))
         }
-        for (index, record) in records.enumerated() {
+        for (index, record) in records.prefix(visibleCount).enumerated() {
             var text = "\(record.deleted ? "Удалено" : "Изменено") · \(formatter.string(from: Date(timeIntervalSince1970: record.observedAt)))\n\(record.chatTitle)"
             if !record.author.isEmpty {
                 text += " · \(record.author)"
@@ -71,13 +94,16 @@ public func localMessageHistoryController(context: AccountContext, message: Engi
             }
             entries.append(LocalHistoryListEntry(stableId: Int32(index + 1), text: text))
         }
+        if records.count > visibleCount {
+            entries.append(LocalHistoryListEntry(stableId: Int32(entries.count), text: "Показать ещё \(min(200, records.count - visibleCount))", loadMore: true))
+        }
         if let message, let local = message.attributes.compactMap({ $0 as? LocalMessageStateAttribute }).first, !local.previousTexts.isEmpty {
             let start = Int32(entries.count + 1)
             for (index, text) in local.previousTexts.enumerated() {
                 entries.append(LocalHistoryListEntry(stableId: start + Int32(index), text: "Версия \(index + 1)\n\n\(text.isEmpty ? "[Без текста]" : text)"))
             }
         }
-        return (controllerState, (ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks, animateChanges: false), ()))
+        return (controllerState, (ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks, animateChanges: false), arguments))
     }
     |> afterDisposed { actions.dispose() }
 

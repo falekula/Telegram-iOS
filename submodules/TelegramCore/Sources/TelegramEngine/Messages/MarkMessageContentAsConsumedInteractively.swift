@@ -5,11 +5,15 @@ import SwiftSignalKit
 
 func _internal_markMessageContentAsConsumedInteractively(postbox: Postbox, messageId: MessageId) -> Signal<Void, NoError> {
     return postbox.transaction { transaction -> Void in
-        if let message = transaction.getMessage(messageId), message.flags.contains(.Incoming) {
-            if shouldRetainEphemeralMedia(message) {
-                _ = retainMessageLocally(transaction: transaction, message: message, deleted: false, ephemeral: true)
-                return
+        if let initialMessage = transaction.getMessage(messageId), initialMessage.flags.contains(.Incoming) {
+            if shouldRetainEphemeralMedia(initialMessage) {
+                _ = retainMessageLocally(transaction: transaction, message: initialMessage, deleted: false, ephemeral: true)
             }
+            // Retention removes the countdown, but playback still needs to
+            // clear the local unplayed indicator. Read the retained attributes
+            // back so the normal consumed-state update cannot restore a timer.
+            // Network and secret-chat guards continue to suppress receipts.
+            guard let message = transaction.getMessage(messageId) else { return }
             var updateMessage = false
             var updatedAttributes = message.attributes
             

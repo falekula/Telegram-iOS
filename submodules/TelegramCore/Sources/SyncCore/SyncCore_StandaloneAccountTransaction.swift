@@ -127,6 +127,16 @@ public let telegramPostboxSeedConfiguration: SeedConfiguration = {
             if updated.contains(where: { ($0 as? LocalMessageStateAttribute)?.retainedMedia == true }) {
                 updated.removeAll { $0 is AutoremoveTimeoutMessageAttribute || $0 is AutoclearTimeoutMessageAttribute }
             }
+            if SideloadPrivacy.hideReadReceipts, previous.contains(where: { ($0 as? ConsumableContentMessageAttribute)?.consumed == true }) {
+                // The server intentionally never receives our playback receipt.
+                // Do not turn a locally played voice/video back into "unplayed"
+                // when its unchanged server copy is loaded again.
+                for i in 0 ..< updated.count {
+                    if let content = updated[i] as? ConsumableContentMessageAttribute, !content.consumed {
+                        updated[i] = ConsumableContentMessageAttribute(consumed: true)
+                    }
+                }
+            }
             if previous.isEmpty {
                 return
             }
