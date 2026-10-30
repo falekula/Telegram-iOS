@@ -1709,10 +1709,10 @@ public final class PendingMessageManager {
     private func sendMessageContent(network: Network, postbox: Postbox, stateManager: AccountStateManager, accountPeerId: PeerId, messageId: MessageId, content: PendingMessageUploadedContentAndReuploadInfo) -> Signal<Void, NoError> {
         let queue = self.queue
         return postbox.transaction { [weak self] transaction -> Signal<Void, NoError> in
-            guard let message = transaction.getMessage(messageId) else {
+            guard let storedMessage = transaction.getMessage(messageId) else {
                 return .complete()
             }
-            let message = refreshPersonalForkSchedule(transaction: transaction, message: message, now: network.getApproximateRemoteTimestamp())
+            let message = refreshPersonalForkSchedule(transaction: transaction, message: storedMessage, now: network.getApproximateRemoteTimestamp())
             let automaticFloodWait = !message.attributes.contains { ($0 as? OutgoingScheduleInfoMessageAttribute)?.isPersonalForkAutomatic == true }
             
             if messageId.peerId.namespace == Namespaces.Peer.SecretChat {
