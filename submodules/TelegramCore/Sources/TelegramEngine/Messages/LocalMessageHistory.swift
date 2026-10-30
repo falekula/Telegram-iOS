@@ -49,14 +49,18 @@ extension TelegramEngine.Messages {
         |> distinctUntilChanged
     }
 
-    public func updateLocalMessageHistoryLimits(_ limits: LocalMessageHistoryLimits) -> Signal<Void, NoError> {
+    public func updateLocalMessageHistoryLimits(_ limits: LocalMessageHistoryLimits) -> Signal<Bool, NoError> {
         return self.account.postbox.transaction { transaction in
-            transaction.setPreferencesEntry(key: localMessageHistoryLimitsKey, value: PreferencesEntry(limits))
+            guard let entry = PreferencesEntry(limits), entry.get(LocalMessageHistoryLimits.self) == limits else {
+                return false
+            }
+            transaction.setPreferencesEntry(key: localMessageHistoryLimitsKey, value: entry)
             if var state = transaction.getPreferencesEntry(key: localMessageHistoryKey)?.get(LocalMessageHistoryState.self) {
                 // Limits only trim the journal. Never delete ordinary or retained chat messages here.
                 state.trim(to: limits)
                 transaction.setPreferencesEntry(key: localMessageHistoryKey, value: PreferencesEntry(state))
             }
+            return transaction.getPreferencesEntry(key: localMessageHistoryLimitsKey)?.get(LocalMessageHistoryLimits.self) == limits
         }
     }
 

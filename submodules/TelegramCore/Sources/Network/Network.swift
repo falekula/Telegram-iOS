@@ -1379,7 +1379,12 @@ public final class Network: NSObject {
             return .complete()
         }
         let requestService = self.requestService
-        return Signal { [requestService] subscriber in
+        let context = self.context
+        return Signal { [requestService, context] subscriber in
+            guard personalForkCanSubmitAutomaticSchedule(data.0, automaticFloodWait: automaticFloodWait, now: context.globalTime()) else {
+                subscriber.putError(MTRpcError(errorCode: 400, errorDescription: "PERSONAL_FORK_SCHEDULE_EXPIRED"))
+                return EmptyDisposable
+            }
             let request = NetworkEngineRequest(
                 payload: data.1.makeData(),
                 metadata: WrappedRequestMetadata(metadata: WrappedFunctionDescription(data.0), tag: tag),
@@ -1391,7 +1396,7 @@ public final class Network: NSObject {
                     return nil
                 },
                 options: NetworkEngineRequestOptions(),
-                shouldContinueAfterError: networkRequestErrorPolicy(automaticFloodWait: automaticFloodWait, onFloodWaitError: onFloodWaitError, failOnServerErrors: false),
+                shouldContinueAfterError: networkRequestErrorPolicy(automaticFloodWait: automaticFloodWait, onFloodWaitError: onFloodWaitError, failOnServerErrors: SideloadPrivacy.failsAutomaticSendOnServerError(data.0.name, automaticFloodWait: automaticFloodWait)),
                 dependsOn: networkRequestDependency(tag: tag),
                 acknowledged: {
                     if info.contains(.acknowledgement) {
@@ -1433,7 +1438,12 @@ public final class Network: NSObject {
             return .complete()
         }
         let requestService = self.requestService
-        return Signal { [requestService] subscriber in
+        let context = self.context
+        return Signal { [requestService, context] subscriber in
+            guard personalForkCanSubmitAutomaticSchedule(data.0, automaticFloodWait: automaticFloodWait, now: context.globalTime()) else {
+                subscriber.putError(MTRpcError(errorCode: 400, errorDescription: "PERSONAL_FORK_SCHEDULE_EXPIRED"))
+                return EmptyDisposable
+            }
             let request = NetworkEngineRequest(
                 payload: data.1.makeData(),
                 metadata: WrappedRequestMetadata(metadata: WrappedFunctionDescription(data.0), tag: tag),
@@ -1445,7 +1455,7 @@ public final class Network: NSObject {
                     return nil
                 },
                 options: NetworkEngineRequestOptions(),
-                shouldContinueAfterError: networkRequestErrorPolicy(automaticFloodWait: automaticFloodWait, onFloodWaitError: onFloodWaitError, failOnServerErrors: false),
+                shouldContinueAfterError: networkRequestErrorPolicy(automaticFloodWait: automaticFloodWait, onFloodWaitError: onFloodWaitError, failOnServerErrors: SideloadPrivacy.failsAutomaticSendOnServerError(data.0.name, automaticFloodWait: automaticFloodWait)),
                 dependsOn: networkRequestDependency(tag: tag),
                 acknowledged: nil,
                 progress: nil,
@@ -1497,6 +1507,18 @@ public final class Network: NSObject {
             return state.markNotifyTimestamp()
         }
     }
+}
+
+func personalForkCanSubmitAutomaticSchedule(_ description: FunctionDescription, automaticFloodWait: Bool, now: TimeInterval) -> Bool {
+    guard SideloadPrivacy.failsAutomaticSendOnServerError(description.name, automaticFloodWait: automaticFloodWait) else { return true }
+    // Read the generated request description, so this validates the actual RPC
+    // fields, not just a local message attribute. Never inspect/log message text.
+    let parameters = description.parameters
+    guard let flags = parameters.first(where: { $0.0 == "flags" })?.1.value as? Int32,
+          flags & (1 << 10) != 0,
+          let timestamp = parameters.first(where: { $0.0 == "schedule_date" })?.1.value as? Int32,
+          timestamp != scheduleWhenOnlineTimestamp else { return false }
+    return TimeInterval(timestamp) - now >= 10.0
 }
 
 func networkRequestErrorPolicy(automaticFloodWait: Bool, onFloodWaitError: ((String) -> Void)?, failOnServerErrors: Bool) -> (NetworkEngineErrorContext) -> Bool {

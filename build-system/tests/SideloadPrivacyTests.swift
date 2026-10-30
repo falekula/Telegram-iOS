@@ -21,9 +21,12 @@ struct SideloadPrivacyTests {
             precondition(!SideloadPrivacy.suppressesRequest(method), "Blocked normal operation: \(method)")
         }
         precondition(SideloadPrivacy.hideReadReceipts)
-        precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: nil) == 12)
-        precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: 1) >= 12)
-        precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: 5 * 1024 * 1024) >= 12)
+        precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: nil) == 15)
+        precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: 1) >= 15)
+        precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: 5 * 1024 * 1024) >= 15)
+        precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: nil, minimumDelay: 73) == 73)
+        precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: nil, minimumDelay: -1) == 15)
+        precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: nil, minimumDelay: Int32.max) == 300)
         precondition(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: Int64.max) <= 300)
         print("Sideload privacy policy tests passed")
     }

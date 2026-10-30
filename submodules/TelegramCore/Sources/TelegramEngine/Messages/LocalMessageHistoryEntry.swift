@@ -19,7 +19,15 @@ public struct LocalMessageHistoryLimits: Codable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(recordCount: try values.decodeIfPresent(Int.self, forKey: .recordCount) ?? 500, megabytes: try values.decodeIfPresent(Int.self, forKey: .megabytes) ?? 4)
+        // Postbox supports fixed-width integer fields, not Codable's native Int.
+        // These keys also read the Int32 fallback written by the previous release.
+        self.init(recordCount: Int(try values.decodeIfPresent(Int32.self, forKey: .recordCount) ?? 500), megabytes: Int(try values.decodeIfPresent(Int32.self, forKey: .megabytes) ?? 4))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(Int32(self.recordCount), forKey: .recordCount)
+        try values.encode(Int32(self.megabytes), forKey: .megabytes)
     }
 }
 

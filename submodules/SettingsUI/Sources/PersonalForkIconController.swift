@@ -22,7 +22,7 @@ final class PersonalForkIconController: ViewController, PHPickerViewControllerDe
         self.context = context
         let data = context.sharedContext.currentPresentationData.with { $0 }
         super.init(navigationBarPresentationData: NavigationBarPresentationData(presentationData: data))
-        self.title = "Своя иконка"
+        self.title = "Ярлык со своим фото"
     }
 
     required init(coder aDecoder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -50,8 +50,8 @@ final class PersonalForkIconController: ViewController, PHPickerViewControllerDe
         stack.addArrangedSubview(self.preview)
         for (title, action) in [
             ("Выбрать фотографию", #selector(self.choosePhoto)),
-            ("Сохранить картинку для ярлыка", #selector(self.exportPhoto)),
-            ("Скопировать ссылку на этот форк", #selector(self.copyLink)),
+            ("Сохранить картинку", #selector(self.exportPhoto)),
+            ("Скопировать ссылку", #selector(self.copyLink(_:))),
             ("Открыть Команды", #selector(self.openShortcuts))
         ] {
             let button = UIButton(type: .system)
@@ -66,7 +66,7 @@ final class PersonalForkIconController: ViewController, PHPickerViewControllerDe
         self.instructions.numberOfLines = 0
         self.instructions.textColor = data.theme.list.itemPrimaryTextColor
         self.instructions.font = .systemFont(ofSize: 16)
-        self.instructions.text = "Это отдельный ярлык запуска с вашей картинкой. Настоящий значок приложения iOS разрешает менять только на встроенные варианты.\n\n1. Выберите и сохраните картинку.\n2. В Командах создайте команду с действием «URL»: вставьте falekulagram://open.\n3. Добавьте действие «Открыть URL».\n4. В меню команды выберите «На экран Домой», нажмите на значок → «Выбрать фото».\n\nЯрлык откроет именно этот форк. Установка профилей и передача фото на сервер не нужны."
+        self.instructions.text = "Отдельный ярлык; значок приложения не меняется.\n\n1. Сохраните фото и скопируйте ссылку.\n2. В Командах добавьте «URL» со ссылкой, затем «Открыть URL».\n3. Выберите «На экран Домой» и своё фото."
         stack.addArrangedSubview(self.instructions)
         let top = scroll.topAnchor.constraint(equalTo: self.view.topAnchor, constant: 100)
         self.scrollTop = top
@@ -117,7 +117,7 @@ final class PersonalForkIconController: ViewController, PHPickerViewControllerDe
                     try FileManager.default.createDirectory(at: self.imagePath.deletingLastPathComponent(), withIntermediateDirectories: true)
                     try square.pngData()?.write(to: self.imagePath, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
                 } catch {
-                    self.instructions.text = "Не удалось сохранить картинку внутри приложения. Можно экспортировать её кнопкой выше."
+                    self.instructions.text = "Не удалось запомнить фото. Нажмите «Сохранить картинку» для экспорта."
                 }
             }
         }
@@ -131,8 +131,13 @@ final class PersonalForkIconController: ViewController, PHPickerViewControllerDe
         self.present(share, animated: true)
     }
 
-    @objc private func copyLink() {
+    @objc private func copyLink(_ sender: UIButton) {
         UIPasteboard.general.string = "falekulagram://open"
+        sender.setTitle("Скопировано", for: .normal)
+        UIAccessibility.post(notification: .announcement, argument: "Ссылка скопирована")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak sender] in
+            sender?.setTitle("Скопировать ссылку", for: .normal)
+        }
     }
 
     @objc private func openShortcuts() {

@@ -22,26 +22,26 @@ private func personalForkNotificationStatus() -> Signal<PersonalForkNotification
                     let permission: String
                     switch settings.authorizationStatus {
                     case .authorized: permission = "Разрешены в iOS"
-                    case .provisional: permission = "Тихая доставка — без баннера и звука"
+                    case .provisional: permission = "Тихая доставка"
                     case .ephemeral: permission = "Разрешены временно"
-                    case .denied: permission = "Запрещены в настройках iOS"
-                    case .notDetermined: permission = "Разрешение ещё не запрошено"
-                    @unknown default: permission = "Статус разрешения неизвестен"
+                    case .denied: permission = "Запрещены в iOS"
+                    case .notDetermined: permission = "Нужно разрешение"
+                    @unknown default: permission = "Статус неизвестен"
                     }
                     let registration: String
                     let details: String
                     if UIApplication.shared.isRegisteredForRemoteNotifications {
-                        registration = "Устройство зарегистрировано в Apple"
-                        details = "Регистрация ещё не подтверждает доставку от Telegram. Проверьте уведомления чата, режим Фокусирование и отправьте сообщение с другого аккаунта, свернув xxxgram. «Избранное» не подходит для проверки."
+                        registration = "Регистрация в Apple — готово"
+                        details = "Доставку ещё нужно проверить: сверните приложение и напишите с другого аккаунта."
                     } else if UserDefaults.standard.string(forKey: "xxxgram.push-registration-failure") == "missing-entitlement" {
-                        registration = "Текущая подпись не поддерживает push"
-                        details = "Apple отклонила регистрацию: в подписи приложения нет разрешения на push. Уведомления при закрытом приложении с этой подписью недоступны. Нужны подходящий профиль подписи и настройка доставки push для приложения. Разрешение в iOS само по себе это не исправит."
+                        registration = "Подпись без push"
+                        details = "Фоновые уведомления недоступны. Нужна подпись с push и настройка доставки."
                     } else if UserDefaults.standard.string(forKey: "xxxgram.push-registration-failure") != nil {
-                        registration = "Не удалось зарегистрироваться в Apple"
-                        details = "Проверьте подключение к интернету и повторите регистрацию. Если ошибка остаётся, нужно проверить подпись приложения и настройку доставки push."
+                        registration = "Ошибка регистрации"
+                        details = "Проверьте интернет и повторите. Если не помогло — проверьте подпись."
                     } else {
-                        registration = "Push ещё не зарегистрирован"
-                        details = "Разрешите уведомления и повторите регистрацию. Для фоновой доставки требуется поддержка push в подписи приложения и настройка отправки со стороны сервера."
+                        registration = "Push не зарегистрирован"
+                        details = "Разрешите уведомления и повторите регистрацию."
                     }
                     subscriber.putNext(PersonalForkNotificationStatus(permission: permission, canRequest: settings.authorizationStatus == .notDetermined, registration: registration, details: details))
                 }
@@ -113,7 +113,7 @@ func personalForkNotificationStatusController(context: AccountContext) -> ViewCo
             PersonalForkNotificationEntry(stableId: 1, section: 1, title: status.registration, detail: status.details, actionable: false),
             PersonalForkNotificationEntry(stableId: 2, section: 2, title: status.canRequest ? "Разрешить уведомления" : "Открыть настройки iOS", detail: "Баннеры, звук и экран блокировки", actionable: true),
             PersonalForkNotificationEntry(stableId: 3, section: 2, title: "Повторить регистрацию", detail: "Проверить подключение к Apple", actionable: true),
-            PersonalForkNotificationEntry(stableId: 4, section: 2, title: "Чаты и звуки", detail: "Настройки уведомлений этого аккаунта", actionable: true)
+            PersonalForkNotificationEntry(stableId: 4, section: 2, title: "Чаты и звуки", detail: "", actionable: true)
         ]
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Уведомления на iPhone"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
         return (controllerState, (ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks, animateChanges: false), arguments))

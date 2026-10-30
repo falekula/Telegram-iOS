@@ -26,6 +26,108 @@ final class PersonalForkTests: XCTestCase {
         XCTAssertFalse(SideloadPrivacy.suppressesRequest(Api.functions.account.setPrivacy(key: .inputPrivacyKeyStatusTimestamp, rules: [.inputPrivacyValueDisallowAll]).0.name))
     }
 
+    func testAutomaticScheduledSendsDoNotRetryFrozenDateAfterServerError() {
+        let serverError = NetworkEngineErrorContext(floodWaitSeconds: 0, floodWaitErrorText: nil, internalServerErrorCount: 1)
+        for name in ["messages.sendMessage", "messages.sendMedia", "messages.sendMultiMedia", "messages.forwardMessages", "messages.sendInlineBotResult"] {
+            let failOnServerErrors = SideloadPrivacy.failsAutomaticSendOnServerError(name, automaticFloodWait: false)
+            XCTAssertTrue(failOnServerErrors, name)
+            let policy = networkRequestErrorPolicy(automaticFloodWait: false, onFloodWaitError: nil, failOnServerErrors: failOnServerErrors)
+            XCTAssertFalse(policy(serverError), name)
+            XCTAssertFalse(SideloadPrivacy.failsAutomaticSendOnServerError(name, automaticFloodWait: true), name)
+        }
+        for name in ["upload.saveFilePart", "messages.uploadMedia", "messages.getBotCallbackAnswer", "account.registerDevice"] {
+            XCTAssertFalse(SideloadPrivacy.failsAutomaticSendOnServerError(name, automaticFloodWait: false), name)
+        }
+        // General reads/uploads keep the normal transient-error retry policy.
+        XCTAssertTrue(networkRequestErrorPolicy(automaticFloodWait: true, onFloodWaitError: nil, failOnServerErrors: false)(serverError))
+    }
+
+    func testBotCallbacksAndNotificationRegistrationRemainFunctional() {
+        let callback = Api.functions.messages.getBotCallbackAnswer(flags: 0, peer: .inputPeerSelf, msgId: 1, data: nil, password: nil)
+        XCTAssertFalse(SideloadPrivacy.suppressesRequest(callback.0.name))
+        XCTAssertFalse(SideloadPrivacy.suppressesRequest("account.registerDevice"))
+        XCTAssertFalse(SideloadPrivacy.suppressesRequest("updates.getDifference"))
+    }
+
+    func testAutomaticSchedulePreflightChecksGeneratedRpcDateAtSubscription() {
+        func request(_ timestamp: Int32?, flags: Int32) -> FunctionDescription {
+            return Api.functions.messages.sendMessage(flags: flags, peer: .inputPeerSelf, replyTo: nil, message: "next", randomId: 1, replyMarkup: nil, entities: nil, scheduleDate: timestamp, scheduleRepeatPeriod: nil, sendAs: nil, quickReplyShortcut: nil, effect: nil, allowPaidStars: nil, suggestedPost: nil, richMessage: nil).0
+        }
+        let valid = request(120, flags: 1 << 10)
+        XCTAssertTrue(personalForkCanSubmitAutomaticSchedule(valid, automaticFloodWait: false, now: 100))
+        XCTAssertTrue(personalForkCanSubmitAutomaticSchedule(valid, automaticFloodWait: false, now: 110))
+        XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(valid, automaticFloodWait: false, now: 110.1))
+        // The same serialized request must fail after queueing crosses Telegram's
+        // documented immediate-send boundary, instead of silently sending now.
+        XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(valid, automaticFloodWait: false, now: 111))
+        XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(request(nil, flags: 0), automaticFloodWait: false, now: 100))
+        XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(request(scheduleWhenOnlineTimestamp, flags: 1 << 10), automaticFloodWait: false, now: 100))
+        // User-created schedules and immediate overrides retain their semantics.
+        XCTAssertTrue(personalForkCanSubmitAutomaticSchedule(valid, automaticFloodWait: true, now: 200))
+        XCTAssertTrue(personalForkCanSubmitAutomaticSchedule(request(nil, flags: 0), automaticFloodWait: true, now: 100))
+    }
+
+    func testAutomaticSchedulePreflightCoversAllGeneratedSendRpcShapes() {
+        func requests(_ timestamp: Int32?, flags: Int32) -> [FunctionDescription] {
+            return [
+                Api.functions.messages.sendMessage(flags: flags, peer: .inputPeerSelf, replyTo: nil, message: "next", randomId: 1, replyMarkup: nil, entities: nil, scheduleDate: timestamp, scheduleRepeatPeriod: nil, sendAs: nil, quickReplyShortcut: nil, effect: nil, allowPaidStars: nil, suggestedPost: nil, richMessage: nil).0,
+                Api.functions.messages.sendMedia(flags: flags, peer: .inputPeerSelf, replyTo: nil, media: .inputMediaDice(.init(emoticon: "🎲")), message: "", randomId: 1, replyMarkup: nil, entities: nil, scheduleDate: timestamp, scheduleRepeatPeriod: nil, sendAs: nil, quickReplyShortcut: nil, effect: nil, allowPaidStars: nil, suggestedPost: nil).0,
+                Api.functions.messages.sendMultiMedia(flags: flags, peer: .inputPeerSelf, replyTo: nil, multiMedia: [], scheduleDate: timestamp, sendAs: nil, quickReplyShortcut: nil, effect: nil, allowPaidStars: nil).0,
+                Api.functions.messages.forwardMessages(flags: flags, fromPeer: .inputPeerSelf, id: [1], randomId: [1], toPeer: .inputPeerSelf, topMsgId: nil, replyTo: nil, scheduleDate: timestamp, scheduleRepeatPeriod: nil, sendAs: nil, quickReplyShortcut: nil, effect: nil, videoTimestamp: nil, allowPaidStars: nil, suggestedPost: nil).0,
+                Api.functions.messages.sendInlineBotResult(flags: flags, peer: .inputPeerSelf, replyTo: nil, randomId: 1, queryId: 1, id: "result", scheduleDate: timestamp, sendAs: nil, quickReplyShortcut: nil, allowPaidStars: nil).0
+            ]
+        }
+        for request in requests(115, flags: 1 << 10) {
+            XCTAssertTrue(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: false, now: 100), request.name)
+            XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: false, now: 105.1), request.name)
+            XCTAssertTrue(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: true, now: 200), request.name)
+        }
+        for request in requests(nil, flags: 0) {
+            XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: false, now: 100), request.name)
+        }
+    }
+
+    func testSendDelayPersistsThroughPostboxAndDrivesEnqueueAndUpload() throws {
+        XCTAssertEqual(PersonalForkSendSettings.defaultSettings.delaySeconds, 15)
+        for delay in [Int32(15), 73, 300] {
+            let settings = PersonalForkSendSettings(delaySeconds: delay)
+            let entry = try XCTUnwrap(PreferencesEntry(settings))
+            let restored = try XCTUnwrap(PreferencesEntry(data: entry.data).get(PersonalForkSendSettings.self))
+            XCTAssertEqual(restored, settings)
+            let message = EnqueueMessage.message(text: "next", attributes: [], inlineStickers: [:], mediaReference: nil, threadId: nil, replyToMessageId: nil, replyToStoryId: nil, localGroupingKey: nil, correlationId: nil, bubbleUpEmojiOrStickersets: [])
+            let queued = personalForkScheduleMessages([(false, message)], peerId: self.id.peerId, now: 100, minimumDelay: restored.delaySeconds)
+            XCTAssertEqual(queued[0].1.attributes.compactMap { $0 as? OutgoingScheduleInfoMessageAttribute }.first?.scheduleTime, 100 + delay)
+            let uploaded = personalForkStandaloneSchedule(attributes: [], mediaBytes: nil, now: 200, minimumDelay: restored.delaySeconds)
+            XCTAssertEqual(uploaded?.scheduleTime, 200 + delay)
+        }
+        XCTAssertEqual(PersonalForkSendSettings(delaySeconds: Int32.min).delaySeconds, 15)
+        XCTAssertEqual(PersonalForkSendSettings(delaySeconds: Int32.max).delaySeconds, 300)
+        XCTAssertEqual(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: 10 * 1024 * 1024, minimumDelay: 15), 45)
+        XCTAssertEqual(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: 10 * 1024 * 1024, minimumDelay: 73), 73)
+        let manual = OutgoingScheduleInfoMessageAttribute(scheduleTime: 700, repeatPeriod: nil)
+        XCTAssertEqual(personalForkStandaloneSchedule(attributes: [manual], mediaBytes: nil, now: 200, minimumDelay: 300)?.scheduleTime, 700)
+    }
+
+    func testExplicitRetryUsesCurrentDelayAndPreservesManualSchedules() {
+        let old = OutgoingScheduleInfoMessageAttribute(scheduleTime: 400, repeatPeriod: nil, isPersonalForkAutomatic: true)
+        let retained = [old as MessageAttribute].compactMap { resentMessageRequestedAttribute($0, isSecretChat: false) }
+        XCTAssertTrue(retained.isEmpty)
+        let retry = EnqueueMessage.message(text: "next", attributes: retained, inlineStickers: [:], mediaReference: nil, threadId: nil, replyToMessageId: nil, replyToStoryId: nil, localGroupingKey: nil, correlationId: nil, bubbleUpEmojiOrStickersets: [])
+        let result = personalForkScheduleMessages([(false, retry)], peerId: self.id.peerId, now: 200, minimumDelay: 15)
+        let refreshed = result[0].1.attributes.compactMap { $0 as? OutgoingScheduleInfoMessageAttribute }.first
+        XCTAssertEqual(refreshed?.scheduleTime, 215)
+        XCTAssertEqual(refreshed?.isPersonalForkAutomatic, true)
+        for timestamp in [Int32(700), scheduleWhenOnlineTimestamp] {
+            let manual = OutgoingScheduleInfoMessageAttribute(scheduleTime: timestamp, repeatPeriod: nil)
+            let attributes = [manual as MessageAttribute].compactMap { resentMessageRequestedAttribute($0, isSecretChat: false) }
+            let forward = EnqueueMessage.forward(source: self.id, threadId: nil, grouping: .none, attributes: attributes, correlationId: nil)
+            let retried = personalForkScheduleMessages([(false, forward)], peerId: self.id.peerId, now: 200, minimumDelay: 15)
+            let preserved = retried[0].1.attributes.compactMap { $0 as? OutgoingScheduleInfoMessageAttribute }.first
+            XCTAssertEqual(preserved?.scheduleTime, timestamp)
+            XCTAssertEqual(preserved?.isPersonalForkAutomatic, false)
+        }
+    }
+
     func testEditKeepsPreviousTextAndDeletionMarker() {
         let marker = LocalMessageStateAttribute(deleted: true, previousTexts: ["first"])
         let previous = stored(text: "second", attributes: [marker])
@@ -159,14 +261,14 @@ final class PersonalForkTests: XCTestCase {
     }
 
     func testGhostScheduleNeverUsesImmediateSendThreshold() {
-        XCTAssertEqual(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: nil), 12)
-        XCTAssertEqual(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: 1), 12)
+        XCTAssertEqual(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: nil), 15)
+        XCTAssertEqual(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: 1), 15)
         XCTAssertEqual(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: 10 * 1024 * 1024), 45)
         XCTAssertEqual(SideloadPrivacy.outgoingScheduleDelay(mediaBytes: Int64.max), 300)
         let message = EnqueueMessage.message(text: "reply", attributes: [], inlineStickers: [:], mediaReference: nil, threadId: nil, replyToMessageId: nil, replyToStoryId: nil, localGroupingKey: nil, correlationId: nil, bubbleUpEmojiOrStickersets: [])
         let scheduled = personalForkScheduleMessages([(false, message)], peerId: self.id.peerId, now: 100)
         let attribute = scheduled[0].1.attributes.compactMap { $0 as? OutgoingScheduleInfoMessageAttribute }.first
-        XCTAssertEqual(attribute?.scheduleTime, 112)
+        XCTAssertEqual(attribute?.scheduleTime, 115)
         XCTAssertEqual(attribute?.isPersonalForkAutomatic, true)
     }
 
@@ -197,7 +299,7 @@ final class PersonalForkTests: XCTestCase {
 
     func testStandaloneShareSchedulesAfterUploadAndRefreshesExpiredAutomaticDate() {
         let schedule = personalForkStandaloneSchedule(attributes: [], mediaBytes: nil, now: 200)
-        XCTAssertEqual(schedule?.scheduleTime, 212)
+        XCTAssertEqual(schedule?.scheduleTime, 215)
         XCTAssertEqual(schedule?.isPersonalForkAutomatic, true)
         let expired = OutgoingScheduleInfoMessageAttribute(scheduleTime: 112, repeatPeriod: nil, isPersonalForkAutomatic: true)
         let refreshed = personalForkStandaloneSchedule(attributes: [expired], mediaBytes: 10 * 1024 * 1024, now: 200)
@@ -212,5 +314,36 @@ final class PersonalForkTests: XCTestCase {
             XCTAssertEqual(result?.scheduleTime, timestamp)
             XCTAssertEqual(result?.isPersonalForkAutomatic, false)
         }
+    }
+
+    func testHistoryLimitsPersistThroughActualPostboxCodec() throws {
+        for limits in [LocalMessageHistoryLimits.defaultSettings, LocalMessageHistoryLimits(recordCount: 1777, megabytes: 23), LocalMessageHistoryLimits(recordCount: 10_000, megabytes: 64)] {
+            let entry = try XCTUnwrap(PreferencesEntry(limits))
+            let restored = PreferencesEntry(data: entry.data).get(LocalMessageHistoryLimits.self)
+            XCTAssertEqual(restored, limits)
+        }
+    }
+
+    func testHistoryLimitsReadPreviousReleaseInt32Fields() throws {
+        // The old release encoder fell back to Int32 for unsupported native Int.
+        struct LegacyLimits: Encodable {
+            let recordCount: Int32
+            let megabytes: Int32
+        }
+        let entry = try XCTUnwrap(PreferencesEntry(LegacyLimits(recordCount: 2500, megabytes: 16)))
+        XCTAssertEqual(PreferencesEntry(data: entry.data).get(LocalMessageHistoryLimits.self), LocalMessageHistoryLimits(recordCount: 2500, megabytes: 16))
+        let invalid = try XCTUnwrap(PreferencesEntry(LegacyLimits(recordCount: -1, megabytes: Int32.max)))
+        XCTAssertEqual(invalid.get(LocalMessageHistoryLimits.self), LocalMessageHistoryLimits(recordCount: 1, megabytes: 64))
+    }
+
+    func testJournalUsesLimitsRestoredFromPostbox() throws {
+        let entry = try XCTUnwrap(PreferencesEntry(LocalMessageHistoryLimits(recordCount: 900, megabytes: 16)))
+        let restored = try XCTUnwrap(PreferencesEntry(data: entry.data).get(LocalMessageHistoryLimits.self))
+        var history = LocalMessageHistoryState()
+        for index in 0 ..< 1000 {
+            history.append(LocalMessageHistoryEntry(id: String(index), peerId: 1, messageId: Int32(index), chatTitle: "Chat", author: "Author", timestamp: 1, observedAt: 1, deleted: false, text: "Before", updatedText: "After", hadMedia: false), limits: restored)
+        }
+        XCTAssertEqual(history.entries.count, 900)
+        XCTAssertEqual(history.entries.first?.messageId, 100)
     }
 }

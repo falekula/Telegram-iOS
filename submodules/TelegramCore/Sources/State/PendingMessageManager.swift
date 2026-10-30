@@ -1201,7 +1201,8 @@ public final class PendingMessageManager {
             messages.sort { $0.0.index < $1.0.index }
 
             let remoteNow = network.getApproximateRemoteTimestamp()
-            let batchDelay = messages.flatMap { $0.0.media }.compactMap { $0 as? TelegramMediaFile }.map { SideloadPrivacy.outgoingScheduleDelay(mediaBytes: $0.size) }.max() ?? 12
+            let configuredDelay = personalForkSendSettings(transaction: transaction).delaySeconds
+            let batchDelay = messages.flatMap { $0.0.media }.compactMap { $0 as? TelegramMediaFile }.map { SideloadPrivacy.outgoingScheduleDelay(mediaBytes: $0.size, minimumDelay: configuredDelay) }.max() ?? configuredDelay
             messages = messages.map { (refreshPersonalForkSchedule(transaction: transaction, message: $0.0, now: remoteNow, minimumDelay: batchDelay), $0.1) }
             // Retrying a serialized ghost schedule after FLOOD_WAIT could make
             // its date expire and turn it into an immediate send on the server.

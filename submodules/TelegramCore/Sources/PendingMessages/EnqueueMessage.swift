@@ -364,6 +364,11 @@ func resentMessageRequestedAttribute(_ attribute: MessageAttribute, isSecretChat
     if attribute is PaidStarsMessageAttribute {
         return nil
     }
+    if let schedule = attribute as? OutgoingScheduleInfoMessageAttribute, schedule.isPersonalForkAutomatic {
+        // An explicit retry is a new enqueue using the account's current delay.
+        // Keep user-created schedules; discard only our old automatic date.
+        return nil
+    }
     if let attribute = attribute as? AutoclearTimeoutMessageAttribute {
         // The media timer of a cloud chat, which is requested in its autoremove form.
         return AutoremoveTimeoutMessageAttribute(timeout: attribute.timeout, countdownBeginTime: nil)
@@ -863,7 +868,7 @@ public func resendMessages(account: Account, messageIds: [MessageId]) -> Signal<
 }
 
 func enqueueMessages(transaction: Transaction, account: Account, peerId: PeerId, messages: [(Bool, EnqueueMessage)], disableAutoremove: Bool = false, transformGroupingKeysWithPeerId: Bool = false) -> [MessageId?] {
-    let messages = personalForkScheduleMessages(messages, peerId: peerId, now: account.network.getApproximateRemoteTimestamp())
+    let messages = personalForkScheduleMessages(messages, peerId: peerId, now: account.network.getApproximateRemoteTimestamp(), minimumDelay: personalForkSendSettings(transaction: transaction).delaySeconds)
     /**
      * If it is a support account, mark messages as read here as they are
      * not marked as read when chat is opened.

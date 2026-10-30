@@ -2203,7 +2203,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
                     if peerId.namespace == Namespaces.Peer.SecretChat {
                         placeholder = "Отправка отключена"
                     } else if peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup || peerId.namespace == Namespaces.Peer.CloudChannel {
-                        placeholder = "Сообщение · от 12 с"
+                        placeholder = "Сообщение · с задержкой"
                     }
                 }
                 updatedPlaceholder = placeholder

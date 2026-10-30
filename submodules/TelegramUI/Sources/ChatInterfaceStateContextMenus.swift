@@ -1246,7 +1246,9 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
             actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.ScheduledMessages_SendNow, icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Resend"), color: theme.actionSheet.primaryTextColor)
             }, action: { c, _ in
-                if messages.contains(where: { $0.pendingProcessingAttribute != nil }) {
+                // xxxgram combines processing and presence warnings into one
+                // confirmation in the shared send-now callback.
+                if !personalForkSchedulesOutgoingMessages && messages.contains(where: { $0.pendingProcessingAttribute != nil }) {
                     c?.dismiss(completion: {
                         let presentationData = context.sharedContext.currentPresentationData.with { $0 }
                         

@@ -36,7 +36,7 @@ private struct HistoryLimitsEntry: ItemListNodeEntry {
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
         if let value = self.value {
             let arguments = arguments as! HistoryLimitsArguments
-            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: self.text, textColor: presentationData.theme.list.itemPrimaryTextColor), text: value, placeholder: self.stableId == 0 ? "500" : "4", type: .number, spacing: 10.0, enabled: self.enabled, sectionId: self.section, textUpdated: { value in
+            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: self.text, textColor: presentationData.theme.list.itemPrimaryTextColor), text: value, placeholder: self.stableId == 0 ? "500" : "4", type: .number, spacing: 10.0, clearType: .onFocus, enabled: self.enabled, selectAllOnFocus: true, sectionId: self.section, textUpdated: { value in
                 arguments.update(self.stableId, value)
             }, shouldUpdateText: { value in
                 return value.utf8.count <= 6 && value.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 })
@@ -69,14 +69,23 @@ public func localMessageHistoryLimitsController(context: AccountContext, initial
     let state = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, draft.get())
     |> map { presentationData, draft -> (ItemListControllerState, (ItemListNodeState, Any)) in
         let save = ItemListNavigationButton(content: .text(draft.saving ? "Сохранение…" : presentationData.strings.Common_Save), style: .bold, enabled: !draft.saving && draft.limits != nil && draft.limits != initialLimits, action: {
-            guard let limits = draft.limits, !draft.saving else { return }
+            let current = draftValue.with { $0 }
+            guard let limits = current.limits, !current.saving else { return }
             let apply: () -> Void = {
+                guard !draftValue.with({ $0.saving }) else { return }
                 updateDraft { $0.saving = true }
                 actions.add((context.engine.messages.updateLocalMessageHistoryLimits(limits)
-                |> deliverOnMainQueue).start(completed: { finishImpl?() }))
+                |> deliverOnMainQueue).start(next: { saved in
+                    if saved {
+                        finishImpl?()
+                    } else {
+                        updateDraft { $0.saving = false }
+                        presentImpl?(textAlertController(context: context, title: "Не удалось сохранить", text: "Значения не изменены. Попробуйте ещё раз.", actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]))
+                    }
+                }))
             }
             if limits.recordCount < initialLimits.recordCount || limits.megabytes < initialLimits.megabytes {
-                presentImpl?(textAlertController(context: context, title: "Уменьшить журнал?", text: "Самые старые записи журнала сверх нового лимита будут удалены без возможности восстановления. Сохранённые сообщения и версии прямо в чатах останутся.", actions: [
+                presentImpl?(textAlertController(context: context, title: "Уменьшить журнал?", text: "Старые записи сверх лимита удалятся навсегда. Копии в чатах останутся.", actions: [
                     TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {}),
                     TextAlertAction(type: .defaultDestructiveAction, title: "Применить", action: apply)
                 ]))
@@ -87,9 +96,8 @@ public func localMessageHistoryLimitsController(context: AccountContext, initial
         let entries = [
             HistoryLimitsEntry(stableId: 0, text: "Записей", value: draft.records, enabled: !draft.saving),
             HistoryLimitsEntry(stableId: 1, text: "Память, МБ", value: draft.megabytes, enabled: !draft.saving),
-            HistoryLimitsEntry(stableId: 2, text: draft.limits == nil ? "Введите от 1 до 10 000 записей и от 1 до 64 МБ. Затем нажмите «Сохранить»." : "Свои значения: 1–10 000 записей и 1–64 МБ. Изменения применяются после «Сохранить» только для этого аккаунта.", value: nil, enabled: true),
-            HistoryLimitsEntry(stableId: 3, text: "Это лимиты текстового журнала правок и удалений. При достижении любого из них удаляются самые старые записи. Больше записей может потребовать больше памяти — увеличьте оба значения, если нужно.", value: nil, enabled: true),
-            HistoryLimitsEntry(stableId: 4, text: "Сообщения с корзиной и исчезающие вложения остаются прямо в личных чатах независимо от журнала. Для каждого сообщения там хранится до 30 прошлых версий текста. Эти лимиты не удаляют сообщения из чатов и не очищают файлы. Увеличение не возвращает ранее удалённые записи.", value: nil, enabled: true)
+            HistoryLimitsEntry(stableId: 2, text: draft.limits == nil ? "Введите 1–10 000 записей и 1–64 МБ." : "1–10 000 записей · 1–64 МБ. Для этого аккаунта.", value: nil, enabled: true),
+            HistoryLimitsEntry(stableId: 3, text: "При заполнении журнала старые записи заменяются новыми. Копии в чатах и до 30 версий текста хранятся отдельно.", value: nil, enabled: true)
         ]
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text("Лимиты истории"), leftNavigationButton: nil, rightNavigationButton: save, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: false)
         return (controllerState, (ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: entries, style: .blocks, animateChanges: false), arguments))

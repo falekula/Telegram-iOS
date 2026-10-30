@@ -352,13 +352,13 @@ private func enqueueSecretChatUploadedMessageContent(
     return updatedState
 }
 
-func personalForkStandaloneSchedule(attributes: [MessageAttribute], mediaBytes: Int64?, now: Int32) -> OutgoingScheduleInfoMessageAttribute? {
+func personalForkStandaloneSchedule(attributes: [MessageAttribute], mediaBytes: Int64?, now: Int32, minimumDelay: Int32 = SideloadPrivacy.minimumOutgoingScheduleDelay) -> OutgoingScheduleInfoMessageAttribute? {
     if let existing = attributes.compactMap({ $0 as? OutgoingScheduleInfoMessageAttribute }).first {
         guard existing.isPersonalForkAutomatic else { return existing }
-        return OutgoingScheduleInfoMessageAttribute(scheduleTime: max(existing.scheduleTime, now + SideloadPrivacy.outgoingScheduleDelay(mediaBytes: mediaBytes)), repeatPeriod: existing.repeatPeriod, isPersonalForkAutomatic: true)
+        return OutgoingScheduleInfoMessageAttribute(scheduleTime: max(existing.scheduleTime, now + SideloadPrivacy.outgoingScheduleDelay(mediaBytes: mediaBytes, minimumDelay: minimumDelay)), repeatPeriod: existing.repeatPeriod, isPersonalForkAutomatic: true)
     }
     guard SideloadPrivacy.scheduleOutgoingMessages else { return nil }
-    return OutgoingScheduleInfoMessageAttribute(scheduleTime: now + SideloadPrivacy.outgoingScheduleDelay(mediaBytes: mediaBytes), repeatPeriod: nil, isPersonalForkAutomatic: true)
+    return OutgoingScheduleInfoMessageAttribute(scheduleTime: now + SideloadPrivacy.outgoingScheduleDelay(mediaBytes: mediaBytes, minimumDelay: minimumDelay), repeatPeriod: nil, isPersonalForkAutomatic: true)
 }
 
 private func sendUploadedMessageContent(
@@ -374,7 +374,7 @@ private func sendUploadedMessageContent(
     threadId: Int64?
 ) -> Signal<Never, StandaloneSendMessagesError> {
     return postbox.transaction { transaction -> Signal<Never, StandaloneSendMessagesError> in
-        let schedule = personalForkStandaloneSchedule(attributes: attributes, mediaBytes: media.compactMap { ($0 as? TelegramMediaFile)?.size }.max(), now: network.getApproximateRemoteTimestamp())
+        let schedule = personalForkStandaloneSchedule(attributes: attributes, mediaBytes: media.compactMap { ($0 as? TelegramMediaFile)?.size }.max(), now: network.getApproximateRemoteTimestamp(), minimumDelay: personalForkSendSettings(transaction: transaction).delaySeconds)
         let attributes = attributes.filter { !($0 is OutgoingScheduleInfoMessageAttribute) } + (schedule.map { [$0 as MessageAttribute] } ?? [])
         let automaticFloodWait = schedule?.isPersonalForkAutomatic != true
         if peerId.namespace == Namespaces.Peer.SecretChat {
@@ -724,7 +724,7 @@ public func standaloneSendMessage(account: Account, peerId: PeerId, text: String
 
 private func sendMessageContent(account: Account, peerId: PeerId, attributes: [MessageAttribute], content: StandaloneMessageContent, threadId: Int32?, mediaBytes: Int64?) -> Signal<Void, StandaloneSendMessageError> {
     return account.postbox.transaction { transaction -> Signal<Void, StandaloneSendMessageError> in
-        let schedule = personalForkStandaloneSchedule(attributes: attributes, mediaBytes: mediaBytes, now: account.network.getApproximateRemoteTimestamp())
+        let schedule = personalForkStandaloneSchedule(attributes: attributes, mediaBytes: mediaBytes, now: account.network.getApproximateRemoteTimestamp(), minimumDelay: personalForkSendSettings(transaction: transaction).delaySeconds)
         let attributes = attributes.filter { !($0 is OutgoingScheduleInfoMessageAttribute) } + (schedule.map { [$0 as MessageAttribute] } ?? [])
         let automaticFloodWait = schedule?.isPersonalForkAutomatic != true
         if peerId.namespace == Namespaces.Peer.SecretChat {

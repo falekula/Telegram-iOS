@@ -4395,7 +4395,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 }
             })
         }, sendScheduledMessagesNow: { [weak self] messageIds in
-            guard let self else {
+            guard let self, let messageId = messageIds.first else {
                 return
             }
             guard !self.presentAccountFrozenInfoIfNeeded(delay: true) else {
@@ -4408,7 +4408,25 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 }
                 return
             } else {
-                let _ = self.context.engine.messages.sendScheduledMessageNowInteractively(messageId: messageIds.first!).startStandalone()
+                let sendNow: () -> Void = { [weak self] in
+                    guard let self else { return }
+                    let _ = self.context.engine.messages.sendScheduledMessageNowInteractively(messageId: messageId).startStandalone()
+                }
+                if personalForkSchedulesOutgoingMessages {
+                    let _ = (self.context.engine.data.get(TelegramEngine.EngineData.Item.Messages.MessageGroup(id: messageId))
+                    |> deliverOnMainQueue).startStandalone(next: { [weak self] messages in
+                        guard let self, !messages.isEmpty else { return }
+                        let processing = messages.contains { $0._asMessage().pendingProcessingAttribute != nil }
+                        let title = processing ? self.presentationData.strings.Chat_ScheduledForceSendProcessingVideo_Title : "Отправить сейчас?"
+                        let text = (processing ? self.presentationData.strings.Chat_ScheduledForceSendProcessingVideo_Text + "\n\n" : "") + "Это может показать статус «онлайн»."
+                        self.present(textAlertController(context: self.context, title: title, text: text, actions: [
+                            TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {}),
+                            TextAlertAction(type: .defaultAction, title: self.presentationData.strings.ScheduledMessages_SendNow, action: sendNow)
+                        ]), in: .window(.root))
+                    })
+                } else {
+                    sendNow()
+                }
             }
         }, editScheduledMessagesTime: { [weak self] messageIds in
             if let strongSelf = self, let messageId = messageIds.first {
@@ -9203,7 +9221,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             action?()
         } else {
             // Keep the input and attachment picker intact when nothing was saved.
-            self.present(textAlertController(context: self.context, title: "Не удалось добавить в очередь", text: "Сообщение не отправлено. Текст и вложения сохранены — попробуйте ещё раз.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+            self.present(textAlertController(context: self.context, title: "Не отправлено", text: "Текст и вложения сохранены. Попробуйте ещё раз.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
         }
     }
     

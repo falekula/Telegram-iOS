@@ -6,13 +6,30 @@ enum SideloadPrivacy {
     static let hideReadReceipts = true
     static let hideOnline = true
     static let scheduleOutgoingMessages = true
+    static let minimumOutgoingScheduleDelay: Int32 = 15
 
-    static func outgoingScheduleDelay(mediaBytes: Int64?) -> Int32 {
+    static func outgoingScheduleDelay(mediaBytes: Int64?, minimumDelay: Int32 = SideloadPrivacy.minimumOutgoingScheduleDelay) -> Int32 {
         // Telegram immediately sends schedule_date < 10 seconds in the future.
-        // Keep at least 12 even for small media (the old AyuGram 6s minimum is
-        // unsafe with the current API). Cap long delays at 5 minutes.
-        guard let mediaBytes = mediaBytes, mediaBytes > 0 else { return 12 }
-        return Int32(min(300.0, max(12.0, ceil(Double(mediaBytes) / 1048576.0 * 4.5))))
+        // The owner's minimum is configurable, with at least five seconds of
+        // headroom above that threshold. It cannot cover an arbitrary network stall.
+        let boundedMinimum = min(300, max(minimumOutgoingScheduleDelay, minimumDelay))
+        guard let mediaBytes = mediaBytes, mediaBytes > 0 else { return boundedMinimum }
+        return Int32(min(300.0, max(Double(boundedMinimum), ceil(Double(mediaBytes) / 1048576.0 * 4.5))))
+    }
+
+    static func failsAutomaticSendOnServerError(_ name: String, automaticFloodWait: Bool) -> Bool {
+        // Automatic scheduled sends opt out of FLOOD_WAIT retries at their call
+        // sites. A 500 retry also reuses the serialized date, so repeated server
+        // errors can turn a scheduled send into an immediate send. Surface the
+        // failure instead; the queue's Retry action builds a fresh schedule.
+        guard scheduleOutgoingMessages, !automaticFloodWait else { return false }
+        switch name {
+        case "messages.sendMessage", "messages.sendMedia", "messages.sendMultiMedia",
+             "messages.forwardMessages", "messages.sendInlineBotResult":
+            return true
+        default:
+            return false
+        }
     }
 
     static func suppressesRequest(_ name: String) -> Bool {
