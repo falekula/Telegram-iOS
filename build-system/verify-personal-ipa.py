@@ -6,6 +6,25 @@ import struct
 import zipfile
 
 
+def png_dimensions(data):
+    assert data[:8] == b'\x89PNG\r\n\x1a\n', 'Invalid icon PNG'
+    # Xcode's optimized PNGs put a CgBI chunk before IHDR. Locate IHDR by
+    # walking chunks instead of assuming it immediately follows the signature.
+    offset = 8
+    while offset + 12 <= len(data):
+        length = struct.unpack_from('>I', data, offset)[0]
+        chunk_type = data[offset + 4:offset + 8]
+        end = offset + 12 + length
+        assert end <= len(data), 'Truncated icon PNG chunk'
+        if chunk_type == b'IHDR':
+            assert length == 13, 'Invalid icon PNG header'
+            return struct.unpack_from('>II', data, offset + 8)
+        if chunk_type == b'IEND':
+            break
+        offset = end
+    raise AssertionError('Missing icon PNG header')
+
+
 def verify(path, expected_build=None):
     with zipfile.ZipFile(path) as archive:
         assert archive.testzip() is None, 'Corrupt IPA archive'
@@ -23,8 +42,8 @@ def verify(path, expected_build=None):
             assert icons['xxxgram'].get('CFBundleIconFiles'), 'Empty icon file list'
         for filename, size in [('xxxgram@2x.png', 120), ('xxxgram@3x.png', 180), ('xxxgram-76@2x.png', 152), ('xxxgram-83.5@2x.png', 167)]:
             data = archive.read(root + filename)
-            assert data[:8] == b'\x89PNG\r\n\x1a\n', 'Invalid icon PNG'
-            assert struct.unpack('>II', data[16:24]) == (size, size), 'Wrong icon dimensions: ' + filename
+            dimensions = png_dimensions(data)
+            assert dimensions == (size, size), f'Wrong icon dimensions: {filename}: {dimensions}, expected {(size, size)}'
         for filename in archive.namelist():
             if not re.fullmatch(re.escape(root) + r'[^/]+\.lproj/InfoPlist\.strings', filename):
                 continue
