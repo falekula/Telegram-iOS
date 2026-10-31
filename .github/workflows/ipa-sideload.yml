@@ -27,8 +27,10 @@ jobs:
           xcodebuild -version
           df -h .
 
-      - name: Import build-only signing certificate
-        run: python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+      - name: Prepare build-only signing profiles
+        run: |
+          python3 build-system/prepare-sideload-profiles.py
+          python3 build-system/Make/ImportCertificates.py --path build/sideload-codesigning/certs
 
       - name: Test privacy policy
         run: |
@@ -56,7 +58,7 @@ jobs:
             build \
             --continueOnError \
             --configurationPath=build/private-sideload-configuration.json \
-            --codesigningInformationPath=build-system/fake-codesigning \
+            --codesigningInformationPath=build/sideload-codesigning \
             --configuration=release_arm64 \
             --buildNumber="$((100000 + GITHUB_RUN_NUMBER))" \
             2>&1 | tee build/build.log
@@ -84,7 +86,7 @@ jobs:
           python3 -u build-system/Make/Make.py \
             test \
             --configurationPath=build/private-sideload-configuration.json \
-            --codesigningInformationPath=build-system/fake-codesigning \
+            --codesigningInformationPath=build/sideload-codesigning \
             --target=//submodules/TelegramCore:PersonalForkTests \
             2>&1 | tee -a build/build.log
 
