@@ -1511,12 +1511,12 @@ public final class Network: NSObject {
 
 func personalForkCanSubmitAutomaticSchedule(_ description: FunctionDescription, automaticFloodWait: Bool, now: TimeInterval) -> Bool {
     guard SideloadPrivacy.failsAutomaticSendOnServerError(description.name, automaticFloodWait: automaticFloodWait) else { return true }
-    // Read the generated request description, so this validates the actual RPC
-    // fields, not just a local message attribute. Never inspect/log message text.
+    // SwiftTL descriptions use camelCase names (scheduleDate), not the wire
+    // schema's snake_case (schedule_date). Never inspect/log message text.
     let parameters = description.parameters
     guard let flags = parameters.first(where: { $0.0 == "flags" })?.1.value as? Int32,
           flags & (1 << 10) != 0,
-          let timestamp = parameters.first(where: { $0.0 == "schedule_date" })?.1.value as? Int32,
+          let timestamp = parameters.first(where: { $0.0 == "scheduleDate" })?.1.value as? Int32,
           timestamp != scheduleWhenOnlineTimestamp else { return false }
     return TimeInterval(timestamp) - now >= 10.0
 }

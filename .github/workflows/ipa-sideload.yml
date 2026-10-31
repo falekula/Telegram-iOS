@@ -49,6 +49,18 @@ jobs:
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: python3 build-system/prepare-sideload-configuration.py
 
+      - name: Test message retention and real API privacy routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          python3 -u build-system/Make/Make.py \
+            test \
+            --configurationPath=build/private-sideload-configuration.json \
+            --codesigningInformationPath=build/sideload-codesigning \
+            --target=//submodules/TelegramCore:PersonalForkTests \
+            2>&1 | tee build/build.log
+
       - name: Build device IPA
         shell: bash
         run: |
@@ -61,7 +73,7 @@ jobs:
             --codesigningInformationPath=build/sideload-codesigning \
             --configuration=release_arm64 \
             --buildNumber="$((100000 + GITHUB_RUN_NUMBER))" \
-            2>&1 | tee build/build.log
+            2>&1 | tee -a build/build.log
           test -s bazel-bin/Telegram/Telegram.ipa
           cp bazel-bin/Telegram/Telegram.ipa build/artifacts/Telegram.ipa
           unzip -tq build/artifacts/Telegram.ipa
@@ -78,17 +90,6 @@ jobs:
           if [ -n "$(ls -A build/dsyms)" ]; then
             ditto -c -k --keepParent build/dsyms build/artifacts/Telegram-dSYMs.zip
           fi
-
-      - name: Test message retention and real API privacy routes
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -u build-system/Make/Make.py \
-            test \
-            --configurationPath=build/private-sideload-configuration.json \
-            --codesigningInformationPath=build/sideload-codesigning \
-            --target=//submodules/TelegramCore:PersonalForkTests \
-            2>&1 | tee -a build/build.log
 
       - name: Encrypt private build artifacts
         env:

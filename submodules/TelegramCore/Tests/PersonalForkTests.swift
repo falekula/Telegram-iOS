@@ -78,11 +78,21 @@ final class PersonalForkTests: XCTestCase {
             ]
         }
         for request in requests(115, flags: 1 << 10) {
+            // Pin the real generated descriptor contract separately from policy:
+            // TLLayout/SchemaBlob use camelCase keys and Int32 scalar values.
+            XCTAssertEqual(request.parameters.first(where: { $0.0 == "flags" })?.1.value as? Int32, Int32(1 << 10), request.name)
+            XCTAssertEqual(request.parameters.first(where: { $0.0 == "scheduleDate" })?.1.value as? Int32, Int32(115), request.name)
             XCTAssertTrue(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: false, now: 100), request.name)
             XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: false, now: 105.1), request.name)
             XCTAssertTrue(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: true, now: 200), request.name)
         }
         for request in requests(nil, flags: 0) {
+            XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: false, now: 100), request.name)
+        }
+        for request in requests(115, flags: 0) {
+            XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: false, now: 100), request.name)
+        }
+        for request in requests(scheduleWhenOnlineTimestamp, flags: 1 << 10) {
             XCTAssertFalse(personalForkCanSubmitAutomaticSchedule(request, automaticFloodWait: false, now: 100), request.name)
         }
     }
