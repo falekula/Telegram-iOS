@@ -198,7 +198,7 @@ public final class SecretMediaPreviewController: ViewController {
         self.disposable.set((context.account.postbox.messageView(messageId) |> deliverOnMainQueue).start(next: { [weak self] view in
             if let strongSelf = self {
                 strongSelf.messageView = view
-                if let message = view.message, message.paidContent == nil, mediaForMessage(message: message) is TelegramMediaImage {
+                if let message = view.message, message.paidContent == nil, let media = mediaForMessage(message: message), media is TelegramMediaImage || (media as? TelegramMediaFile).map({ $0.isVideo || $0.isInstantVideo || $0.mimeType.hasPrefix("video/") }) == true {
                     strongSelf.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Сохранить", style: .plain, target: strongSelf, action: #selector(strongSelf.savePhotoPressed))
                 } else {
                     strongSelf.navigationItem.rightBarButtonItem = nil
@@ -248,9 +248,14 @@ public final class SecretMediaPreviewController: ViewController {
     @objc private func savePhotoPressed() {
         guard let message = self.messageView?.message,
               message.paidContent == nil,
-              let image = mediaForMessage(message: message) as? TelegramMediaImage else {
+              let media = mediaForMessage(message: message) else {
             return
         }
+        if let file = media as? TelegramMediaFile, file.isVideo || file.isInstantVideo || file.mimeType.hasPrefix("video/") {
+            presentVideoSave(context: self.context, controller: self, userLocation: .peer(message.id.peerId), mediaReference: .message(message: MessageReference(message), media: file))
+            return
+        }
+        guard let image = media as? TelegramMediaImage else { return }
         let _ = (saveLoadedPhotoToCameraRoll(context: self.context, mediaReference: .message(message: MessageReference(message), media: image))
         |> deliverOnMainQueue).startStandalone(next: { [weak self] result in
             guard let self else { return }

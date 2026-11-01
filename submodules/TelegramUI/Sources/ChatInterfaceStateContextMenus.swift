@@ -1505,28 +1505,51 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
             }
         }
         
+        if message.paidContent == nil, let file = message.effectiveMedia.compactMap({ $0 as? TelegramMediaFile }).first(where: { $0.isVideo || $0.isInstantVideo || $0.mimeType.hasPrefix("video/") }) {
+            actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Gallery_SaveVideo, icon: { theme in
+                generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Save"), color: theme.actionSheet.primaryTextColor)
+            }, action: { _, finish in
+                finish(.default)
+                let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+                let disposable = MetaDisposable()
+                let progress = OverlayStatusController(theme: presentationData.theme, type: .loading(cancelled: {
+                    disposable.dispose()
+                }))
+                controllerInteraction.presentControllerInCurrent(progress, nil)
+                disposable.set((saveVideoToCameraRoll(context: context, userLocation: .peer(message.id.peerId), mediaReference: .message(message: MessageReference(message), media: file))
+                |> afterDisposed { [weak progress] in
+                    Queue.mainQueue().async {
+                        progress?.dismiss()
+                    }
+                }
+                |> deliverOnMainQueue).start(next: { [weak progress] state in
+                    if case let .result(result) = state {
+                        progress?.dismiss()
+                        Queue.mainQueue().after(0.2) {
+                            controllerInteraction.presentControllerInCurrent(UndoOverlayController(presentationData: presentationData, content: .info(title: nil, text: result.message, timeout: 3.0, customUndoText: nil), elevatedLayout: false, animateInAsReplacement: false, action: { _ in false }), nil)
+                        }
+                    }
+                }))
+            })))
+        }
+
         if resourceAvailable, !message.containsSecretMedia && !isCopyProtected {
             var mediaReference: AnyMediaReference?
-            var isVideo = false
             for media in message.effectiveMedia {
                 if let image = media as? TelegramMediaImage, let _ = largestImageRepresentation(image.representations) {
                     mediaReference = ImageMediaReference.standalone(media: image).abstract
                     break
-                } else if let file = media as? TelegramMediaFile, file.isVideo {
-                    mediaReference = FileMediaReference.standalone(media: file).abstract
-                    isVideo = true
-                    break
                 }
             }
             if let mediaReference = mediaReference {
-                actions.append(.action(ContextMenuActionItem(text: isVideo ? chatPresentationInterfaceState.strings.Gallery_SaveVideo : chatPresentationInterfaceState.strings.Gallery_SaveImage, icon: { theme in
+                actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Gallery_SaveImage, icon: { theme in
                     return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Save"), color: theme.actionSheet.primaryTextColor)
                 }, action: { _, f in
                     let _ = (saveToCameraRoll(context: context, userLocation: .peer(message.id.peerId), mediaReference: mediaReference)
                              |> deliverOnMainQueue).startStandalone(completed: {
                         Queue.mainQueue().after(0.2) {
                             let presentationData = context.sharedContext.currentPresentationData.with { $0 }
-                            controllerInteraction.presentControllerInCurrent(UndoOverlayController(presentationData: presentationData, content: .mediaSaved(text: isVideo ? presentationData.strings.Gallery_VideoSaved : presentationData.strings.Gallery_ImageSaved), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return true }), nil)
+                            controllerInteraction.presentControllerInCurrent(UndoOverlayController(presentationData: presentationData, content: .mediaSaved(text: presentationData.strings.Gallery_ImageSaved), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return true }), nil)
                         }
                     })
                     f(.default)

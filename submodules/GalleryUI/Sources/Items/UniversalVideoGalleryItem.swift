@@ -3688,7 +3688,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                     }
                 }
             } else {
-                if let (message, maybeFile, _) = strongSelf.contentInfo(), let file = maybeFile, !message.isCopyProtected() && !item.peerIsCopyProtected && message.paidContent == nil {
+                if let (message, maybeFile, _) = strongSelf.contentInfo(), let file = maybeFile, message.paidContent == nil {
                     items.append(.action(ContextMenuActionItem(text: strongSelf.presentationData.strings.Gallery_MenuSaveToGallery, icon: { theme in generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Download"), color: theme.actionSheet.primaryTextColor) }, action: { c, _ in
                         guard let self else {
                             c?.dismiss(result: .default, completion: nil)
@@ -3696,13 +3696,12 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                         }
                         
                         if let content = item.content as? HLSVideoContent {
-                            guard let videoNode = self.videoNode, let qualityState = videoNode.videoQualityState(), !qualityState.available.isEmpty else {
-                                return
-                            }
-                            if qualityState.available.isEmpty {
-                                return
-                            }
-                            guard let qualitySet = HLSQualitySet(baseFile: content.fileReference, codecConfiguration: HLSCodecConfiguration(context: self.context)) else {
+                            guard let videoNode = self.videoNode, let qualityState = videoNode.videoQualityState(), !qualityState.available.isEmpty,
+                                  let qualitySet = HLSQualitySet(baseFile: content.fileReference, codecConfiguration: HLSCodecConfiguration(context: self.context)) else {
+                                c?.dismiss(result: .default, completion: nil)
+                                if let controller = self.galleryController() {
+                                    presentVideoSave(context: self.context, controller: controller, userLocation: .peer(message.id.peerId), mediaReference: .message(message: MessageReference(message), media: file))
+                                }
                                 return
                             }
                             
@@ -3761,34 +3760,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                                             return
                                         }
                                         
-                                        let saveScreen = SaveProgressScreen(context: self.context, content: .progress(self.presentationData.strings.Story_TooltipSaving, 0.0))
-                                        controller.present(saveScreen, in: .current)
-                                        
-                                        let stringSaving = self.presentationData.strings.Story_TooltipSaving
-                                        let stringSaved = self.presentationData.strings.Story_TooltipSaved
-                                        
-                                        let saveFileReference: AnyMediaReference = qualityFile.abstract
-                                        let saveSignal = SaveToCameraRoll.saveToCameraRoll(context: self.context, userLocation: .peer(message.id.peerId), mediaReference: saveFileReference)
-                                        
-                                        let disposable = (saveSignal
-                                        |> deliverOnMainQueue).start(next: { [weak saveScreen] progress in
-                                            guard let saveScreen else {
-                                                return
-                                            }
-                                            saveScreen.content = .progress(stringSaving, progress)
-                                        }, completed: { [weak saveScreen] in
-                                            guard let saveScreen else {
-                                                return
-                                            }
-                                            saveScreen.content = .completion(stringSaved)
-                                            Queue.mainQueue().after(3.0, { [weak saveScreen] in
-                                                saveScreen?.dismiss()
-                                            })
-                                        })
-                                        
-                                        saveScreen.cancelled = {
-                                            disposable.dispose()
-                                        }
+                                        presentVideoSave(context: self.context, controller: controller, userLocation: .peer(message.id.peerId), mediaReference: qualityFile.abstract)
                                     })))
                                 }
                                 
@@ -3812,24 +3784,8 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                         } else {
                             c?.dismiss(result: .default, completion: nil)
                             
-                            switch self.fetchStatus {
-                            case .Local:
-                                let _ = (SaveToCameraRoll.saveToCameraRoll(context: self.context, userLocation: .peer(message.id.peerId), mediaReference: .message(message: MessageReference(message), media: file))
-                                |> deliverOnMainQueue).start(completed: { [weak self] in
-                                    guard let self else {
-                                        return
-                                    }
-                                    guard let controller = self.galleryController() else {
-                                        return
-                                    }
-                                    controller.present(UndoOverlayController(presentationData: self.presentationData, content: .mediaSaved(text: self.presentationData.strings.Gallery_VideoSaved), elevatedLayout: false, animateInAsReplacement: false, action: { _ in return false }), in: .window(.root))
-                                })
-                            default:
-                                guard let controller = self.galleryController() else {
-                                    return
-                                }
-                                controller.present(textAlertController(context: self.context, title: nil, text: self.presentationData.strings.Gallery_WaitForVideoDownoad, actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {
-                                })]), in: .window(.root))
+                            if let controller = self.galleryController() {
+                                presentVideoSave(context: self.context, controller: controller, userLocation: .peer(message.id.peerId), mediaReference: .message(message: MessageReference(message), media: file))
                             }
                         }
                     })))
