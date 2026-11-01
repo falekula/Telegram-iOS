@@ -12,12 +12,17 @@ on:
         required: false
         default: false
         type: boolean
+      syntax_only:
+        description: Check changed C++ objects using pinned official dependencies; no app artifact
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: xxxgram-linux
+  group: ${{ inputs.syntax_only && 'xxxgram-linux-syntax' || 'xxxgram-linux' }}
   cancel-in-progress: false
 
 jobs:
@@ -30,9 +35,12 @@ jobs:
       - name: Validate source revision
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
+          DEPENDENCIES_ONLY: ${{ inputs.dependencies_only }}
+          SYNTAX_ONLY: ${{ inputs.syntax_only }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || { echo 'A full lowercase commit SHA is required'; exit 1; }
+          [[ "$DEPENDENCIES_ONLY:$SYNTAX_ONLY" != true:true ]] || { echo 'Choose one build mode'; exit 1; }
 
       - name: Check out artifact tools
         uses: actions/checkout@v4
@@ -59,7 +67,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y python3-cryptography python3-jinja2
           /usr/bin/python3 -m unittest discover -s artifact-tools/build-system/tests -p test_linux_artifact.py
+          /usr/bin/python3 -m unittest discover -s artifact-tools/build-system/tests -p test_linux_objects.py
           mkdir -p build/artifacts
+
+      - name: Test proxy and prepare offline dependencies
+        if: ${{ !inputs.dependencies_only }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install --no-install-recommends -y python3-venv
+          /usr/bin/python3 -m venv build/proxy-test-env
+          build/proxy-test-env/bin/python -m pip download --only-binary=:all: \
+            --dest build/proxy-wheels \
+            -r desktop/Telegram/ThirdParty/xxxgram-ws-proxy/requirements.txt
+          build/proxy-test-env/bin/python -m pip install --no-index \
+            --find-links build/proxy-wheels \
+            -r desktop/Telegram/ThirdParty/xxxgram-ws-proxy/requirements.txt
+          build/proxy-test-env/bin/python -m pip check
+          build/proxy-test-env/bin/python -m unittest discover \
+            -s desktop/tools/tests -p test_xxxgram_proxy.py
+
+      - name: Test send policy
+        if: ${{ !inputs.dependencies_only }}
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -Wall -Wextra -Werror -I desktop/Telegram/SourceFiles \
+            desktop/Telegram/SourceFiles/tests/xxxgram_policy_tests.cpp -o build/xxxgram-policy-tests
+          build/xxxgram-policy-tests
 
       - name: Free build disk space
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6
@@ -67,6 +100,7 @@ jobs:
           tool-cache: true
 
       - name: Render dependencies from the selected source
+        if: ${{ !inputs.syntax_only }}
         working-directory: desktop/Telegram/build/docker/centos_env
         run: |
           set -euo pipefail
@@ -75,6 +109,7 @@ jobs:
           df -h .
 
       - name: Configure bounded dependency builder
+        if: ${{ !inputs.syntax_only }}
         uses: docker/setup-buildx-action@v3
         with:
           driver-opts: |
@@ -87,6 +122,7 @@ jobs:
               max-parallelism = 2
 
       - name: Build matching dependencies
+        if: ${{ !inputs.syntax_only }}
         uses: docker/build-push-action@v6
         with:
           context: desktop/Telegram/build/docker/centos_env
@@ -98,8 +134,36 @@ jobs:
           provenance: false
           sbom: false
 
+      - name: Check changed C++ objects with official dependencies
+        if: ${{ inputs.syntax_only }}
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          set -euo pipefail
+          git -C desktop fetch --depth=1 origin 5c674f1f6a0f6ace55b67f8bc295138680fe588b
+          docker pull ghcr.io/telegramdesktop/tdesktop/centos_env@sha256:096d17fb0445b8156de32d3b2778f84ea2959b2f6162a27a9064c1033c97f39e
+          docker run --rm --cpus=4 --memory=12g --memory-swap=14g \
+            -u "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE/desktop:/usr/src/tdesktop" \
+            -v "$GITHUB_WORKSPACE/artifact-tools/build-system:/xxxgram-tools:ro" \
+            -e TELEGRAM_API_ID -e TELEGRAM_API_HASH \
+            ghcr.io/telegramdesktop/tdesktop/centos_env@sha256:096d17fb0445b8156de32d3b2778f84ea2959b2f6162a27a9064c1033c97f39e bash -c '
+              set -euo pipefail
+              Telegram/configure.sh \
+                -D CMAKE_CONFIGURATION_TYPES=Debug \
+                -D CMAKE_C_FLAGS_DEBUG="-O0 -g0" \
+                -D CMAKE_CXX_FLAGS_DEBUG="-O0 -g0" \
+                -D TDESKTOP_API_TEST=OFF \
+                -D TDESKTOP_API_ID="$TELEGRAM_API_ID" \
+                -D TDESKTOP_API_HASH="$TELEGRAM_API_HASH" \
+                -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
+                -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
+              python3 /xxxgram-tools/check-linux-objects.py --source /usr/src/tdesktop
+            ' 2>&1 | tee build/build.log
+
       - name: Build xxxgram
-        if: ${{ !inputs.dependencies_only }}
+        if: ${{ !inputs.dependencies_only && !inputs.syntax_only }}
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
@@ -133,7 +197,7 @@ jobs:
           file desktop/out/Debug/Telegram
 
       - name: Package and authenticate encrypted artifact
-        if: ${{ !inputs.dependencies_only }}
+        if: ${{ !inputs.dependencies_only && !inputs.syntax_only }}
         env:
           TELEGRAM_ARTIFACT_PASSWORD: ${{ secrets.TELEGRAM_ARTIFACT_PASSWORD }}
           SOURCE_REF: ${{ inputs.source_ref }}
@@ -144,6 +208,12 @@ jobs:
           install -m 755 desktop/out/Debug/Telegram build/package/xxxgram/xxxgram
           strip --strip-debug build/package/xxxgram/xxxgram
           cp desktop/LICENSE build/package/xxxgram/LICENSE
+          cp desktop/Telegram/Resources/art/xxxgram.png build/package/xxxgram/xxxgram.png
+          install -m 755 desktop/Telegram/build/xxxgram/install-linux.sh build/package/xxxgram/install.sh
+          mkdir -p build/package/xxxgram/proxy/proxy
+          cp desktop/Telegram/ThirdParty/xxxgram-ws-proxy/{bridge.py,requirements.txt,LICENSE,UPSTREAM.md} build/package/xxxgram/proxy/
+          cp desktop/Telegram/ThirdParty/xxxgram-ws-proxy/proxy/*.py build/package/xxxgram/proxy/proxy/
+          cp -R build/proxy-wheels build/package/xxxgram/proxy/wheels
           printf '%s\n' "$SOURCE_REF" > build/package/xxxgram/SOURCE_COMMIT
           printf '%s\n' 'https://github.com/falekula/xxxgram-desktop' > build/package/xxxgram/SOURCE_REPOSITORY
           tar -czf build/artifacts/xxxgram-linux-x86_64.tar.gz -C build/package xxxgram
@@ -169,7 +239,7 @@ jobs:
           PYCODE
 
       - name: Upload encrypted xxxgram
-        if: ${{ !inputs.dependencies_only }}
+        if: ${{ !inputs.dependencies_only && !inputs.syntax_only }}
         uses: actions/upload-artifact@v4
         with:
           name: xxxgram-linux-x86_64
