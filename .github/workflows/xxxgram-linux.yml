@@ -68,7 +68,50 @@ jobs:
           sudo apt-get install --no-install-recommends -y python3-cryptography python3-jinja2
           /usr/bin/python3 -m unittest discover -s artifact-tools/build-system/tests -p test_linux_artifact.py
           /usr/bin/python3 -m unittest discover -s artifact-tools/build-system/tests -p test_linux_objects.py
+          /usr/bin/python3 -m unittest discover -s artifact-tools/build-system/tests -p test_linux_compiler_cache.py
           mkdir -p build/artifacts
+
+      - name: Identify private compiler cache
+        if: ${{ !inputs.dependencies_only }}
+        id: cache_key
+        env:
+          RECIPE_HASH: ${{ hashFiles('desktop/Telegram/build/docker/centos_env/Dockerfile', 'desktop/Telegram/build/docker/centos_env/gen_dockerfile.py') }}
+          CACHE_MODE: ${{ inputs.syntax_only && 'syntax' || 'full' }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p build/cache-transfer
+          echo "prefix=xxxgram-ccache-v1-$RECIPE_HASH-" >> "$GITHUB_OUTPUT"
+          echo "mode-prefix=xxxgram-ccache-v1-$RECIPE_HASH-$CACHE_MODE-" >> "$GITHUB_OUTPUT"
+          echo "key=xxxgram-ccache-v1-$RECIPE_HASH-$CACHE_MODE-$SOURCE_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Restore encrypted compiler cache
+        if: ${{ !inputs.dependencies_only }}
+        id: cache_restore
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: build/cache-transfer/ccache.enc
+          key: ${{ steps.cache_key.outputs.key }}
+          restore-keys: |
+            ${{ steps.cache_key.outputs.mode-prefix }}
+            ${{ steps.cache_key.outputs.prefix }}
+
+      - name: Authenticate private compiler cache
+        if: ${{ !inputs.dependencies_only }}
+        id: cache_setup
+        env:
+          TELEGRAM_ARTIFACT_PASSWORD: ${{ secrets.TELEGRAM_ARTIFACT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if test -s build/cache-transfer/ccache.enc; then
+            /usr/bin/python3 artifact-tools/build-system/linux-compiler-cache.py restore \
+              build/compiler-cache build/cache-transfer/ccache.enc || \
+              echo '::warning::Compiler cache authentication failed; starting with an empty cache'
+          fi
+          mkdir -p build/compiler-cache
 
       - name: Test proxy and prepare offline dependencies
         if: ${{ !inputs.dependencies_only }}
@@ -136,6 +179,7 @@ jobs:
 
       - name: Check changed C++ objects with official dependencies
         if: ${{ inputs.syntax_only }}
+        id: syntax_build
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
@@ -147,13 +191,19 @@ jobs:
             -u "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE/desktop:/usr/src/tdesktop" \
             -v "$GITHUB_WORKSPACE/artifact-tools/build-system:/xxxgram-tools:ro" \
+            -v "$GITHUB_WORKSPACE/build/compiler-cache:/ccache" \
+            -e CCACHE_DIR=/ccache -e CCACHE_BASEDIR=/usr/src/tdesktop \
+            -e CCACHE_MAXSIZE=1G -e CCACHE_COMPRESS=1 -e CCACHE_COMPILERCHECK=content -e CCACHE_UMASK=077 \
+            -e CCACHE_SLOPPINESS=pch_defines,time_macros \
             -e TELEGRAM_API_ID -e TELEGRAM_API_HASH \
             ghcr.io/telegramdesktop/tdesktop/centos_env@sha256:096d17fb0445b8156de32d3b2778f84ea2959b2f6162a27a9064c1033c97f39e bash -c '
               set -euo pipefail
+              unset CCACHE_DISABLE
+              trap "ccache --cleanup || true; ccache --show-stats || true" EXIT
               Telegram/configure.sh \
                 -D CMAKE_CONFIGURATION_TYPES=Debug \
-                -D CMAKE_C_FLAGS_DEBUG="-O0 -g0" \
-                -D CMAKE_CXX_FLAGS_DEBUG="-O0 -g0" \
+                -D CMAKE_C_FLAGS_DEBUG="-O0 -g0 -fpch-preprocess" \
+                -D CMAKE_CXX_FLAGS_DEBUG="-O0 -g0 -fpch-preprocess" \
                 -D TDESKTOP_API_TEST=OFF \
                 -D TDESKTOP_API_ID="$TELEGRAM_API_ID" \
                 -D TDESKTOP_API_HASH="$TELEGRAM_API_HASH" \
@@ -164,6 +214,7 @@ jobs:
 
       - name: Build xxxgram
         if: ${{ !inputs.dependencies_only && !inputs.syntax_only }}
+        id: app_build
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
@@ -179,14 +230,20 @@ jobs:
           docker run --rm --cpus=4 --memory=12g --memory-swap=14g \
             -u "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE/desktop:/usr/src/tdesktop" \
+            -v "$GITHUB_WORKSPACE/build/compiler-cache:/ccache" \
+            -e CCACHE_DIR=/ccache -e CCACHE_BASEDIR=/usr/src/tdesktop \
+            -e CCACHE_MAXSIZE=1G -e CCACHE_COMPRESS=1 -e CCACHE_COMPILERCHECK=content -e CCACHE_UMASK=077 \
+            -e CCACHE_SLOPPINESS=pch_defines,time_macros \
             -e CONFIG=Debug -e CMAKE_BUILD_PARALLEL_LEVEL=4 \
             -e TELEGRAM_API_ID -e TELEGRAM_API_HASH \
             xxxgram:build-env bash -c '
               set -euo pipefail
+              unset CCACHE_DISABLE
+              trap "ccache --cleanup || true; ccache --show-stats || true" EXIT
               Telegram/build/docker/centos_env/build.sh \
                 -D CMAKE_CONFIGURATION_TYPES=Debug \
-                -D CMAKE_C_FLAGS_DEBUG="-O0 -g0" \
-                -D CMAKE_CXX_FLAGS_DEBUG="-O0 -g0" \
+                -D CMAKE_C_FLAGS_DEBUG="-O0 -g0 -fpch-preprocess" \
+                -D CMAKE_CXX_FLAGS_DEBUG="-O0 -g0 -fpch-preprocess" \
                 -D TDESKTOP_API_TEST=OFF \
                 -D TDESKTOP_API_ID="$TELEGRAM_API_ID" \
                 -D TDESKTOP_API_HASH="$TELEGRAM_API_HASH" \
@@ -195,6 +252,25 @@ jobs:
             ' 2>&1 | tee build/build.log
           test -s desktop/out/Debug/Telegram
           file desktop/out/Debug/Telegram
+
+      - name: Encrypt compiler cache after build attempt
+        if: ${{ always() && !inputs.dependencies_only && steps.cache_setup.outcome == 'success' && (steps.syntax_build.outcome == 'success' || steps.syntax_build.outcome == 'failure' || steps.app_build.outcome == 'success' || steps.app_build.outcome == 'failure') }}
+        id: cache_encrypt
+        continue-on-error: true
+        env:
+          TELEGRAM_ARTIFACT_PASSWORD: ${{ secrets.TELEGRAM_ARTIFACT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 artifact-tools/build-system/linux-compiler-cache.py save \
+            build/compiler-cache build/cache-transfer/ccache.enc
+
+      - name: Save only encrypted compiler cache
+        if: ${{ always() && steps.cache_encrypt.outcome == 'success' && steps.cache_restore.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: build/cache-transfer/ccache.enc
+          key: ${{ steps.cache_key.outputs.key }}
 
       - name: Package and authenticate encrypted artifact
         if: ${{ !inputs.dependencies_only && !inputs.syntax_only }}
@@ -236,6 +312,8 @@ jobs:
           Path('build/artifacts/xxxgram-linux-x86_64.tar.gz').unlink(missing_ok=True)
           shutil.rmtree('build/package', ignore_errors=True)
           shutil.rmtree('desktop/out', ignore_errors=True)
+          shutil.rmtree('build/compiler-cache', ignore_errors=True)
+          shutil.rmtree('build/cache-transfer', ignore_errors=True)
           PYCODE
 
       - name: Upload encrypted xxxgram
