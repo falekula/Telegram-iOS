@@ -1,0 +1,189 @@
+name: Build xxxgram for Linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Full commit SHA from falekula/xxxgram-desktop, branch xxxgram-linux
+        required: true
+        type: string
+      dependencies_only:
+        description: Prepare matching dependency cache without building the app
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xxxgram-linux
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - name: Validate source revision
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || { echo 'A full lowercase commit SHA is required'; exit 1; }
+
+      - name: Check out artifact tools
+        uses: actions/checkout@v4
+        with:
+          path: artifact-tools
+          persist-credentials: false
+          sparse-checkout: build-system
+
+      - name: Check out pinned desktop sources
+        uses: actions/checkout@v4
+        with:
+          repository: falekula/xxxgram-desktop
+          ref: ${{ inputs.source_ref }}
+          path: desktop
+          submodules: ${{ inputs.dependencies_only && 'false' || 'recursive' }}
+          persist-credentials: false
+
+      - name: Check source and artifact encryption
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          test "$(git -C desktop rev-parse HEAD)" = "$SOURCE_REF"
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y python3-cryptography python3-jinja2
+          /usr/bin/python3 -m unittest discover -s artifact-tools/build-system/tests -p test_linux_artifact.py
+          mkdir -p build/artifacts
+
+      - name: Free build disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6
+        with:
+          tool-cache: true
+
+      - name: Render dependencies from the selected source
+        working-directory: desktop/Telegram/build/docker/centos_env
+        run: |
+          set -euo pipefail
+          DEBUG= LTO= JOBS=4 /usr/bin/python3 gen_dockerfile.py > Dockerfile.generated
+          mv Dockerfile.generated Dockerfile
+          df -h .
+
+      - name: Configure bounded dependency builder
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            memory=12g
+            memory-swap=14g
+            cpu-period=100000
+            cpu-quota=400000
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 2
+
+      - name: Build matching dependencies
+        uses: docker/build-push-action@v6
+        with:
+          context: desktop/Telegram/build/docker/centos_env
+          load: true
+          tags: xxxgram:build-env
+          platforms: linux/amd64
+          cache-from: type=gha,scope=xxxgram-linux-dependencies-v733
+          cache-to: type=gha,scope=xxxgram-linux-dependencies-v733,mode=max,ignore-error=true,timeout=15m
+          provenance: false
+          sbom: false
+
+      - name: Build xxxgram
+        if: ${{ !inputs.dependencies_only }}
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 - <<'PYCODE'
+          import os, re
+          if not re.fullmatch(r'[1-9][0-9]*', os.environ.get('TELEGRAM_API_ID', '')):
+              raise SystemExit('TELEGRAM_API_ID is missing or invalid')
+          if not re.fullmatch(r'[0-9a-fA-F]{32}', os.environ.get('TELEGRAM_API_HASH', '')):
+              raise SystemExit('TELEGRAM_API_HASH is missing or invalid')
+          PYCODE
+          docker run --rm --cpus=4 --memory=12g --memory-swap=14g \
+            -u "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE/desktop:/usr/src/tdesktop" \
+            -e CONFIG=Debug -e CMAKE_BUILD_PARALLEL_LEVEL=4 \
+            -e TELEGRAM_API_ID -e TELEGRAM_API_HASH \
+            xxxgram:build-env bash -c '
+              set -euo pipefail
+              Telegram/build/docker/centos_env/build.sh \
+                -D CMAKE_CONFIGURATION_TYPES=Debug \
+                -D CMAKE_C_FLAGS_DEBUG="-O0 -g0" \
+                -D CMAKE_CXX_FLAGS_DEBUG="-O0 -g0" \
+                -D TDESKTOP_API_TEST=OFF \
+                -D TDESKTOP_API_ID="$TELEGRAM_API_ID" \
+                -D TDESKTOP_API_HASH="$TELEGRAM_API_HASH" \
+                -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON \
+                -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON
+            ' 2>&1 | tee build/build.log
+          test -s desktop/out/Debug/Telegram
+          file desktop/out/Debug/Telegram
+
+      - name: Package and authenticate encrypted artifact
+        if: ${{ !inputs.dependencies_only }}
+        env:
+          TELEGRAM_ARTIFACT_PASSWORD: ${{ secrets.TELEGRAM_ARTIFACT_PASSWORD }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p build/package/xxxgram
+          install -m 755 desktop/out/Debug/Telegram build/package/xxxgram/xxxgram
+          strip --strip-debug build/package/xxxgram/xxxgram
+          cp desktop/LICENSE build/package/xxxgram/LICENSE
+          printf '%s\n' "$SOURCE_REF" > build/package/xxxgram/SOURCE_COMMIT
+          printf '%s\n' 'https://github.com/falekula/xxxgram-desktop' > build/package/xxxgram/SOURCE_REPOSITORY
+          tar -czf build/artifacts/xxxgram-linux-x86_64.tar.gz -C build/package xxxgram
+          /usr/bin/python3 artifact-tools/build-system/encrypt-linux-artifact.py build/artifacts/xxxgram-linux-x86_64.tar.gz
+          cd build/artifacts
+          sha256sum xxxgram-linux-x86_64.tar.gz.enc > xxxgram-linux-x86_64.tar.gz.enc.sha256
+
+      - name: Remove plaintext and sanitize build log
+        if: ${{ always() && !inputs.dependencies_only }}
+        env:
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          /usr/bin/python3 - <<'PYCODE'
+          import os, shutil
+          from pathlib import Path
+          path = Path('build/build.log')
+          secret = os.environ.get('TELEGRAM_API_HASH', '')
+          if path.exists() and secret:
+              path.write_text(path.read_text(errors='replace').replace(secret, '[REDACTED]'))
+          Path('build/artifacts/xxxgram-linux-x86_64.tar.gz').unlink(missing_ok=True)
+          shutil.rmtree('build/package', ignore_errors=True)
+          shutil.rmtree('desktop/out', ignore_errors=True)
+          PYCODE
+
+      - name: Upload encrypted xxxgram
+        if: ${{ !inputs.dependencies_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: xxxgram-linux-x86_64
+          path: |
+            build/artifacts/xxxgram-linux-x86_64.tar.gz.enc
+            build/artifacts/xxxgram-linux-x86_64.tar.gz.enc.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload sanitized build log
+        if: ${{ always() && !inputs.dependencies_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: xxxgram-linux-build-log
+          path: build/build.log
+          if-no-files-found: ignore
+          retention-days: 7
